@@ -1,2 +1,0 @@
-# NakamuraTwinsStudio.
-App twins
