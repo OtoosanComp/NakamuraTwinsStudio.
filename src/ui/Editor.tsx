@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft, Undo2, Redo2, Eye, Save, Download, Share2, MoreVertical, Sparkles, Sun, Palette,
-  Droplets, SlidersHorizontal, Crop, Film, Wand2, RotateCcw, Copy, ClipboardPaste, Grid3x3, Loader2, Trash2, Users,
+  Droplets, SlidersHorizontal, Crop, Film, Wand2, RotateCcw, Copy, ClipboardPaste, Grid3x3, Loader2, Trash2, Users, Pipette, TriangleAlert,
 } from 'lucide-react';
 import {
   ASPECTS, COLOR, EFFECTS, GRADING, HSL_COLORS, LIGHT, MASK, ALL_DEFS, defaultCrop, hslDefs, neutral,
@@ -81,6 +81,9 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
   const [maskBusy, setMaskBusy] = useState(false);
   const [maskError, setMaskError] = useState<string | null>(null);
   const [showMask, setShowMask] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const [clip, setClip] = useState(false);
+  const sampleRef = useRef<CanvasRenderingContext2D | null>(null);
   const dragStart = useRef<EditState | null>(null);
   const learnTimer = useRef<number>();
 
@@ -122,6 +125,68 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     return () => { rendererRef.current?.dispose(); rendererRef.current = null; };
   }, [photo]);
 
+  useEffect(() => { sampleRef.current = null; }, [photo]);
+
+  // ---------- Gotero de balance de blancos ----------
+  /** Copia de la foto original para leer colores. Se crea la primera vez que usas el gotero. */
+  const sampleCtx = useCallback(() => {
+    if (sampleRef.current || !photo) return sampleRef.current;
+    const k = Math.min(1, 1024 / Math.max(photo.previewW, photo.previewH));
+    const c = document.createElement('canvas');
+    c.width = Math.round(photo.previewW * k);
+    c.height = Math.round(photo.previewH * k);
+    const ctx = c.getContext('2d', { willReadFrequently: true })!;
+    ctx.drawImage(photo.preview, 0, 0, c.width, c.height);
+    sampleRef.current = ctx;
+    return ctx;
+  }, [photo]);
+
+  /** Toca un gris o blanco: calculamos temperatura y matiz que lo dejan neutro. */
+  const pickWhiteBalance = (clientX: number, clientY: number) => {
+    const cv = canvasRef.current;
+    const ctx = sampleCtx();
+    if (!cv || !ctx || !photo) return;
+    const r = cv.getBoundingClientRect();
+    const u = (clientX - r.left) / r.width;
+    const v = (clientY - r.top) / r.height;
+    if (u < 0 || u > 1 || v < 0 || v > 1) return;
+
+    // Del punto en pantalla al pixel de la foto, deshaciendo recorte y giro.
+    const rect = resolveCrop(edit.crop, photo.previewW, photo.previewH);
+    const qx = (u - 0.5) * rect.w, qy = (v - 0.5) * rect.h;
+    const cs = Math.cos(rect.angle), sn = Math.sin(rect.angle);
+    const scale = ctx.canvas.width / photo.previewW;
+    const px = (rect.cx + qx * cs - qy * sn) * scale;
+    const py = (rect.cy + qx * sn + qy * cs) * scale;
+
+    const S = 7;
+    const x0 = Math.max(0, Math.min(ctx.canvas.width - S, Math.round(px) - (S >> 1)));
+    const y0 = Math.max(0, Math.min(ctx.canvas.height - S, Math.round(py) - (S >> 1)));
+    const d = ctx.getImageData(x0, y0, S, S).data;
+    let R = 0, G = 0, B = 0;
+    for (let i = 0; i < d.length; i += 4) { R += d[i]; G += d[i + 1]; B += d[i + 2]; }
+    const n = d.length / 4;
+    const lin = (x: number) => Math.pow(Math.max(x / n, 2) / 255, 2.2);
+    const Rl = lin(R), Gl = lin(G), Bl = lin(B);
+
+    // Resolvemos la temperatura y el matiz que igualan los tres canales.
+    // ±1.5 porque las luces de escenario necesitan más corrección que un ±1
+    const clampU = (x: number) => Math.max(-1.5, Math.min(1.5, x));
+    const K = Gl * (1 / Rl + 1 / Bl);
+    const ti = clampU((K - 2) / (0.16 + 0.18 * K));
+    const t = clampU((Gl * (1 - 0.18 * ti) * (1 / Rl - 1 / Bl)) / 0.64);
+
+    let next = setFinalValue(edit, preset, 'temperature', Math.round(t * 100));
+    next = setFinalValue(next, preset, 'tint', Math.round(ti * 100));
+    commit(next, edit);
+    setPicking(false);
+    showLearn({
+      title: 'Balance de blancos con gotero',
+      body: 'Tomé el color de ese punto y calculé la temperatura y el matiz que lo dejan gris neutro.',
+      tip: 'Funciona mejor sobre algo que sabes que es blanco o gris: una pared, una tela blanca o el blanco de los ojos.',
+    });
+  };
+
   // ---------- Máscara del sujeto ----------
   useEffect(() => {
     rendererRef.current?.setMask(edit.maskOn ? mask : null);
@@ -154,10 +219,10 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     if (!r || !photo) return;
     const id = requestAnimationFrame(() => {
       const { rect, w, h } = outputSize(edit.crop, photo.previewW, photo.previewH, PREVIEW_MAX);
-      r.render(bypass ? neutral() : adj, rect, w, h, bypass, showMask);
+      r.render(bypass ? neutral() : adj, rect, w, h, bypass, showMask, clip);
     });
     return () => cancelAnimationFrame(id);
-  }, [adj, edit.crop, bypass, photo, mask, showMask]);
+  }, [adj, edit.crop, bypass, photo, mask, showMask, clip]);
 
   // ---------- Histograma de la foto editada ----------
   useEffect(() => {
@@ -203,7 +268,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     if (!settings.showTips) return;
     setLearn(info);
     clearTimeout(learnTimer.current);
-    learnTimer.current = window.setTimeout(() => setLearn(null), 4500);
+    learnTimer.current = window.setTimeout(() => setLearn(null), 9000);
   };
 
   // ---------- Controles ----------
@@ -233,6 +298,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
   // ---------- Recorte: arrastrar para mover ----------
   const drag = useRef<{ x: number; y: number; crop: CropState } | null>(null);
   const onPointerDown = (e: React.PointerEvent) => {
+    if (picking) { pickWhiteBalance(e.clientX, e.clientY); return; }
     if (tab !== 'recorte' || !photo) return;
     (e.target as Element).setPointerCapture(e.pointerId);
     drag.current = { x: e.clientX, y: e.clientY, crop: edit.crop };
@@ -276,12 +342,12 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     toast('Guardado en "Mis fotos". Puedes seguir editándola cuando quieras.');
   };
 
-  const runExport = async (mode: 'gallery' | 'share') => {
+  const runExport = async (mode: 'gallery' | 'share', limit?: number) => {
     if (!photo) return;
     setMenu(false);
     setBusy('Revelando en alta calidad…');
     try {
-      const jpeg = await exportJpeg(photo, adj, edit.crop, edit.maskOn ? mask : null);
+      const jpeg = await exportJpeg(photo, adj, edit.crop, edit.maskOn ? mask : null, limit);
       if (mode === 'gallery') {
         const where = await saveToGallery(jpeg);
         toast(`¡Listo! Foto guardada en ${where}`);
@@ -439,12 +505,29 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
       case 'luz':
         return (
           <div className="panel">
+            <button className={`btn small ${clip ? 'primary' : ''}`} onClick={() => {
+              setClip(!clip);
+              if (!clip) showLearn({
+                title: 'Avisar quemados y pegados',
+                body: 'Marca en rojo lo que salió blanco total y en azul lo que salió negro total. Ahí ya no hay detalle que recuperar.',
+                tip: 'En cosplay con traje blanco, revisa esto siempre antes de entregar: el rojo sobre la tela significa que perdiste la textura.',
+              });
+            }}>
+              <TriangleAlert size={14} /> {clip ? 'Ocultar avisos' : 'Avisar quemados y pegados'}
+            </button>
             {hist && <Histogram data={hist} />}
             {LIGHT.map((d) => sliderFor(d))}
           </div>
         );
       case 'color':
-        return <div className="panel">{COLOR.map((d) => sliderFor(d))}</div>;
+        return (
+          <div className="panel">
+            <button className={`btn small ${picking ? 'primary' : ''}`} onClick={() => setPicking(!picking)}>
+              <Pipette size={14} /> {picking ? 'Toca un gris o blanco de la foto…' : 'Gotero de balance de blancos'}
+            </button>
+            {COLOR.map((d) => sliderFor(d))}
+          </div>
+        );
       case 'mezcla':
         return (
           <div className="panel">
@@ -593,6 +676,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
         {menu && (
           <div className="menu" onClick={(e) => e.stopPropagation()}>
             <button onClick={() => runExport('gallery')}><Download size={16} /> Exportar a la galería (JPG máxima calidad)</button>
+            <button onClick={() => runExport('gallery', 2048)}><Download size={16} /> Exportar para redes (2048 px)</button>
             <button onClick={() => runExport('share')}><Share2 size={16} /> Compartir…</button>
             <button onClick={() => { setMenu(false); saveProject(); }}><Save size={16} /> Guardar en "Mis fotos"</button>
             <button onClick={copyAdjustments}><Copy size={16} /> Copiar ajustes</button>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Grid3x3, Loader2, Sparkles, SwitchCamera, Smartphone } from 'lucide-react';
+import { ArrowLeft, Grid3x3, Loader2, Sparkles, SwitchCamera } from 'lucide-react';
 import { resolveCrop, defaultCrop } from '../engine/adjustments';
 import { analyzeImage } from '../engine/analyze';
 import { composeAdjustments, initialEdit } from '../engine/editState';
@@ -14,11 +14,10 @@ import { useFit } from './useFit';
  * Cámara dentro de la app: ves el estilo EN VIVO, con cuadrícula de tercios,
  * nivel de horizonte y consejos de las gemelas antes de disparar.
  */
-export function StudioCamera({ settings, onBack, onCapture, onPhoneCamera, toast }: {
+export function StudioCamera({ settings, onBack, onCapture, toast }: {
   settings: Settings;
   onBack: () => void;
   onCapture: (blob: Blob, presetId: string | null) => void;
-  onPhoneCamera: () => void;
   toast: (m: string) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -213,9 +212,7 @@ export function StudioCamera({ settings, onBack, onCapture, onPhoneCamera, toast
             <SwitchCamera />
           </button>
         </div>
-        <button className="link small" onClick={onPhoneCamera}>
-          <Smartphone size={14} /> Aquí el visor va en 1080p para ir fluido. Para máxima resolución y modo Pro (RAW, ISO, velocidad), usa la cámara del teléfono
-        </button>
+        <span className="muted small center">Visor en 1080p. Para máxima resolución o modo Pro, dispara con la cámara del teléfono y abre la foto desde la galería.</span>
       </div>
     </div>
   );

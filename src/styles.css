@@ -199,7 +199,13 @@ input[type='range']::-moz-range-thumb { width: 18px; height: 18px; border-radius
   box-shadow: 0 10px 30px #0009; animation: pop 0.15s ease-out; max-height: 35vh; overflow-y: auto;
 }
 @keyframes pop { from { transform: translateY(8px); opacity: 0; } }
-.learn-head { display: flex; justify-content: space-between; }
+.learn-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.learn-head strong { flex: 1; }
+.learn-close {
+  width: 26px; height: 26px; flex: none; border-radius: 50%; display: grid; place-items: center;
+  background: var(--line); color: var(--muted); font-size: 0.8em; line-height: 1;
+}
+.learn-close:active { background: var(--accent); color: #fff; }
 .learn-value { color: var(--accent2); font-variant-numeric: tabular-nums; }
 .learn-effect { color: #fff; }
 .learn-tip { color: #ffd479; }

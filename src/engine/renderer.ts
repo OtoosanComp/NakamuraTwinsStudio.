@@ -44,7 +44,7 @@ uniform vec3 u_gS, u_gM, u_gH;
 uniform float u_gBalance;
 uniform float u_clarity, u_dehaze, u_sharpen, u_fade, u_vignette, u_grain, u_grainSize, u_seed;
 uniform float u_denoise;
-uniform float u_hasMask, u_showMask, u_maskFeather;
+uniform float u_hasMask, u_showMask, u_maskFeather, u_clip;
 uniform float u_bgExposure, u_bgBlur, u_bgSaturation, u_subjExposure, u_subjClarity;
 
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
@@ -200,7 +200,15 @@ void main() {
     c += n * u_grain * 0.28 * (0.35 + 0.65 * (1.0 - abs(2.0 * gl - 1.0)));
   }
 
-  o = vec4(clamp(c, 0.0, 1.0), 1.0);
+  c = clamp(c, 0.0, 1.0);
+
+  // --- Aviso de quemados y pegados: zonas sin detalle recuperable ---
+  if (u_clip > 0.5) {
+    if (min(c.r, min(c.g, c.b)) > 0.993) c = vec3(1.0, 0.12, 0.2);      // blanco quemado
+    else if (max(c.r, max(c.g, c.b)) < 0.008) c = vec3(0.2, 0.5, 1.0);  // negro pegado
+  }
+
+  o = vec4(c, 1.0);
 }`;
 
 function compile(gl: WebGL2RenderingContext, type: number, src: string) {
@@ -331,7 +339,7 @@ export class Renderer {
     this.gl.deleteFramebuffer(t.fb);
   }
 
-  render(adj: Adjustments, crop: CropRect, outW: number, outH: number, bypass = false, showMask = false) {
+  render(adj: Adjustments, crop: CropRect, outW: number, outH: number, bypass = false, showMask = false, clip = false) {
     const gl = this.gl;
     if (!this.src || !this.a || !this.b) return;
     if (this.canvas.width !== outW) this.canvas.width = outW;
@@ -374,6 +382,7 @@ export class Renderer {
     gl.uniform1i(m.u('u_mask'), 2);
     gl.uniform1f(m.u('u_hasMask'), this.mask ? 1 : 0);
     gl.uniform1f(m.u('u_showMask'), showMask ? 1 : 0);
+    gl.uniform1f(m.u('u_clip'), clip ? 1 : 0);
     gl.uniform2f(m.u('u_srcSize'), this.srcW, this.srcH);
     gl.uniform2f(m.u('u_outSize'), outW, outH);
     gl.uniform2f(m.u('u_cropCenter'), crop.cx, crop.cy);

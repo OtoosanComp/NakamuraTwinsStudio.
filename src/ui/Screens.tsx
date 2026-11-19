@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowLeft, Aperture, Camera, Images, Settings as Gear, Trash2, ExternalLink, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { ArrowLeft, Aperture, Images, Settings as Gear, Trash2, ExternalLink, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { TWINS } from '../ai/twins';
 import { projects, AI_MODELS, KEY_URL, PROVIDER_NAMES, hasAiKey, type Project, type Settings } from '../lib/storage';
 import { TwinAvatar, TwinBubble } from './Twins';
@@ -11,9 +11,8 @@ const GREETINGS = [
   ['Composición con ritmo: repetir una forma 3 veces guía la mirada como un compás.', 'Los colores opuestos (azul y naranja) siempre se ven de cine.'],
 ];
 
-export function Home({ onGallery, onPhoneCamera, onStudioCamera, onLibrary, onSettings, onOpenProject, hasKey }: {
+export function Home({ onGallery, onStudioCamera, onLibrary, onSettings, onOpenProject, hasKey }: {
   onGallery: () => void;
-  onPhoneCamera: () => void;
   onStudioCamera: () => void;
   onLibrary: () => void;
   onSettings: () => void;
@@ -49,17 +48,12 @@ export function Home({ onGallery, onPhoneCamera, onStudioCamera, onLibrary, onSe
         <button className="action primary" onClick={onGallery}>
           <Images size={28} />
           <b>Abrir de la galería</b>
-          <small>Tus fotos del Redmi, incluidas las de modo Pro</small>
+          <small>Tus fotos del Redmi. Dispara en modo Pro con la cámara del teléfono y ábrelas aquí.</small>
         </button>
         <button className="action" onClick={onStudioCamera}>
           <Aperture size={28} />
           <b>Cámara Studio</b>
           <small>Ve el estilo en vivo, con cuadrícula, nivel y consejos</small>
-        </button>
-        <button className="action" onClick={onPhoneCamera}>
-          <Camera size={28} />
-          <b>Cámara del teléfono</b>
-          <small>Máxima calidad y modo Pro; al regresar se edita sola</small>
         </button>
       </div>
 

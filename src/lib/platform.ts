@@ -1,6 +1,5 @@
 // Todo lo que toca el teléfono: cámara, galería, guardar y compartir.
 import { Capacitor } from '@capacitor/core';
-import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import { Media } from '@capacitor-community/media';
@@ -9,40 +8,16 @@ import { blobToDataUrl } from './image';
 export const isNative = Capacitor.isNativePlatform();
 export const ALBUM = 'Nakamura Twins Studio';
 
-function pickFile(capture?: boolean): Promise<File | null> {
+/** Abre la galería del teléfono y regresa la foto original (sin recomprimir). */
+export function pickFromGallery(): Promise<Blob | null> {
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/*';
-    if (capture) input.setAttribute('capture', 'environment');
     input.onchange = () => resolve(input.files?.[0] ?? null);
     input.addEventListener('cancel', () => resolve(null));
     input.click();
   });
-}
-
-/** Abre la galería del teléfono y regresa la foto original (sin recomprimir). */
-export function pickFromGallery(): Promise<Blob | null> {
-  return pickFile(false);
-}
-
-/** Abre la app de cámara del teléfono (ahí puedes usar el modo Pro). */
-export async function takeWithPhoneCamera(): Promise<Blob | null> {
-  if (!isNative) return pickFile(true);
-  try {
-    const photo = await Camera.getPhoto({
-      source: CameraSource.Camera,
-      resultType: CameraResultType.Uri,
-      quality: 100,
-      saveToGallery: true,
-      correctOrientation: true,
-    });
-    if (!photo.webPath) return null;
-    return await (await fetch(photo.webPath)).blob();
-  } catch (e) {
-    if (String(e).toLowerCase().includes('cancel')) return null;
-    throw e;
-  }
 }
 
 function stamp() {

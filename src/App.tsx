@@ -3,7 +3,7 @@ import { App as CapApp } from '@capacitor/app';
 import { Editor, type EditorSource } from './ui/Editor';
 import { StudioCamera } from './ui/StudioCamera';
 import { Home, Library, SettingsScreen } from './ui/Screens';
-import { pickFromGallery, takeWithPhoneCamera, isNative } from './lib/platform';
+import { pickFromGallery, isNative } from './lib/platform';
 import { hasAiKey, loadSettings, saveSettings, type Project, type Settings } from './lib/storage';
 
 type Screen =
@@ -50,9 +50,6 @@ export default function App() {
   const fromGallery = async () => {
     try { openBlob(await pickFromGallery()); } catch (e) { toast(String((e as Error).message ?? e)); }
   };
-  const fromPhoneCamera = async (presetId: string | null = 'nolan') => {
-    try { openBlob(await takeWithPhoneCamera(), presetId); } catch (e) { toast(`Cámara: ${(e as Error).message ?? e}`); }
-  };
   const openProject = (p: Project) => push({ name: 'editor', source: { blob: p.original, edit: p.edit, projectId: p.id } });
 
   let view;
@@ -62,7 +59,6 @@ export default function App() {
         <Home
           hasKey={hasAiKey(settings)}
           onGallery={fromGallery}
-          onPhoneCamera={() => fromPhoneCamera()}
           onStudioCamera={() => push({ name: 'camera' })}
           onLibrary={() => push({ name: 'library' })}
           onSettings={() => push({ name: 'settings' })}
@@ -80,7 +76,6 @@ export default function App() {
           toast={toast}
           onBack={back}
           onCapture={(blob, presetId) => replace({ name: 'editor', source: { blob, presetId } })}
-          onPhoneCamera={async () => { back(); await fromPhoneCamera(); }}
         />
       );
       break;

@@ -8,24 +8,48 @@ const MASK_MAX = 512;
 let segmenter: ImageSegmenter | null = null;
 let loading: Promise<ImageSegmenter> | null = null;
 
+/**
+ * MediaPipe arma las rutas como `${base}/archivo.js`, así que la base NO puede terminar en barra:
+ * quedaría `/mp//archivo.js` y Android lee los archivos del APK sin corregir la barra doble,
+ * por lo que el modelo nunca cargaba en el teléfono (en el navegador sí, porque ahí sí se corrige).
+ */
+const MP_BASE = new URL('mp', document.baseURI).href.replace(/\/+$/, '');
+
 function assetUrl(file: string) {
-  return new URL(`mp/${file}`, document.baseURI).href;
+  return `${MP_BASE}/${file}`;
+}
+
+/** Si algo falla, decimos cuál archivo faltó en vez de un mensaje genérico. */
+async function loadFailure(e: unknown): Promise<string> {
+  const files = ['vision_wasm_internal.js', 'vision_wasm_internal.wasm', 'selfie_segmenter.tflite'];
+  const checks = await Promise.all(
+    files.map(async (f) => {
+      try {
+        const r = await fetch(assetUrl(f), { method: 'GET' });
+        return `${f}: ${r.ok ? 'ok' : r.status}`;
+      } catch {
+        return `${f}: sin respuesta`;
+      }
+    }),
+  );
+  const msg = e instanceof Error ? e.message : String(e);
+  return `No pude cargar el modelo para separar al sujeto.\n${msg}\n${checks.join(' · ')}`;
 }
 
 async function getSegmenter(): Promise<ImageSegmenter> {
   if (segmenter) return segmenter;
   if (!loading) {
     loading = (async () => {
-      const files = await FilesetResolver.forVisionTasks(new URL('mp/', document.baseURI).href);
+      const files = await FilesetResolver.forVisionTasks(MP_BASE);
       segmenter = await ImageSegmenter.createFromOptions(files, {
         baseOptions: { modelAssetPath: assetUrl('selfie_segmenter.tflite') },
         runningMode: 'IMAGE',
         outputConfidenceMasks: true,
       });
       return segmenter;
-    })().catch((e) => {
+    })().catch(async (e) => {
       loading = null;
-      throw e;
+      throw new Error(await loadFailure(e));
     });
   }
   return loading;
@@ -36,12 +60,7 @@ async function getSegmenter(): Promise<ImageSegmenter> {
  * blanco = persona, negro = fondo.
  */
 export async function personMask(source: ImageBitmap | HTMLCanvasElement): Promise<HTMLCanvasElement> {
-  let seg: ImageSegmenter;
-  try {
-    seg = await getSegmenter();
-  } catch {
-    throw new Error('No pude cargar el modelo para separar al sujeto. Reinstala la app.');
-  }
+  const seg = await getSegmenter();
 
   let input: HTMLCanvasElement;
   if (source instanceof HTMLCanvasElement) input = source;

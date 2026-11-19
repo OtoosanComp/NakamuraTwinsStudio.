@@ -93,7 +93,7 @@ export const LIGHT: SliderDef[] = [
 
 export const COLOR: SliderDef[] = [
   {
-    key: 'temperature', label: 'Temperatura', min: -100, max: 100, step: 1,
+    key: 'temperature', label: 'Temperatura', min: -150, max: 150, step: 1,
     gradient: 'linear-gradient(90deg,#3b78ff,#d9d9d9,#ffb13b)',
     what: 'El balance entre tonos fríos (azul) y cálidos (amarillo/naranja).',
     up: 'Más cálida: atardecer, nostalgia, calidez.',
@@ -101,7 +101,7 @@ export const COLOR: SliderDef[] = [
     tip: 'Nolan suele enfriar sus escenas de ciudad para que se sientan serias.',
   },
   {
-    key: 'tint', label: 'Matiz', min: -100, max: 100, step: 1,
+    key: 'tint', label: 'Matiz', min: -150, max: 150, step: 1,
     gradient: 'linear-gradient(90deg,#3bd16f,#d9d9d9,#e04fb4)',
     what: 'Corrige o crea dominantes verdes o magentas.',
     up: 'Más magenta/rosa.',

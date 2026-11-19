@@ -46,10 +46,11 @@ export const EXIF_LESSONS: Record<string, LearnInfo> = {
 export function LearnBubble({ info, onClose }: { info: LearnInfo | null; onClose: () => void }) {
   if (!info) return null;
   return (
-    <div className="learn" onClick={onClose} role="status">
+    <div className="learn" role="status">
       <div className="learn-head">
         <strong>{info.title}</strong>
         {info.value && <span className="learn-value">{info.value}</span>}
+        <button className="learn-close" onClick={onClose} aria-label="Cerrar ayuda">✕</button>
       </div>
       <p>{info.body}</p>
       {info.effect && <p className="learn-effect">{info.effect}</p>}

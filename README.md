@@ -9,7 +9,6 @@ dos personajes de IA:
 ## Qué hace
 
 - **Abrir de la galería**: carga la foto original (incluidas las de modo Pro) y lee ISO, velocidad, apertura y lente.
-- **Cámara del teléfono**: abre la cámara del Redmi (con modo Pro), y al regresar la foto ya trae aplicado el Auto Pro y el estilo.
 - **Cámara Studio**: visor en vivo (1080p) con el estilo aplicado, cuadrícula de tercios, nivel de horizonte, medidor de pulso firme y consejos de las gemelas antes de disparar.
 - **Separar sujeto del fondo**: un modelo de IA que corre dentro del teléfono (sin internet) recorta a las personas, para ajustar la luz, el color y el desenfoque del fondo sin tocar al sujeto.
 - **Reducir ruido**: limpia las manchas de color de las sombras cuando disparas con ISO alto. El Auto Pro lo ajusta solo según el ISO de la foto.
@@ -18,7 +17,9 @@ dos personajes de IA:
 - **Controles tipo Lightroom**: Luz, Color, Mezcla HSL por color, Gradación de color, Efectos (claridad, neblina, nitidez, desvanecer, viñeta y grano), Recorte y enderezado (con formato de cine 2.39:1).
 - **Aprende mientras editas**: cada control explica qué hace al moverlo. Toca el nombre para ver la explicación y dale doble toque para restablecerlo.
 - **Gemelas (Gemini o Groq)**: califican la foto, dan consejos de encuadre y color, sugieren estilo, recorte y ajustes, y dejan una lección.
-- **Guardar** (proyecto editable), **Exportar** en JPG de máxima calidad al álbum *Nakamura Twins Studio*, **Compartir**, **Deshacer y rehacer**, **Antes/después** (mantén presionado el ojo), y **Copiar y pegar ajustes**.
+- **Gotero de balance de blancos**: tocas un gris o un blanco de la foto y calcula la temperatura y el matiz que lo dejan neutro. Pensado para luces de escenario.
+- **Avisar quemados y pegados**: marca en rojo lo que salió blanco total y en azul lo que salió negro total, para no entregar un traje blanco sin textura.
+- **Guardar** (proyecto editable), **Exportar** en JPG de máxima calidad al álbum *Nakamura Twins Studio*, **Exportar para redes** (2048 px), **Compartir**, **Deshacer y rehacer**, **Antes/después** (mantén presionado el ojo), y **Copiar y pegar ajustes**.
 
 ## Instalar en el teléfono
 
@@ -35,6 +36,9 @@ dos personajes de IA:
 - **Capturar RAW/DNG en la Cámara Studio.** La app corre dentro de un WebView y Android no le da
   acceso al sensor en crudo; solo entrega cuadros ya procesados. Para RAW usa el modo Pro del
   teléfono: guarda el DNG y un JPG al lado, y la app abre ese JPG.
+- **Abrir la cámara del teléfono en modo Pro.** Android no permite pedirle a otra app de cámara que
+  arranque en un modo concreto ni con ciertos parámetros, así que ese botón se quitó: dispara en Pro
+  desde la cámara del teléfono y abre la foto con "Abrir de la galería".
 - **Abrir archivos DNG o HEIC.** Expórtalos antes como JPG desde la galería.
 
 ## Desarrollo
