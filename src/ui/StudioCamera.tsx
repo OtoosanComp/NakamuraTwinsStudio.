@@ -5,8 +5,8 @@ import { analyzeImage } from '../engine/analyze';
 import { composeAdjustments, initialEdit } from '../engine/editState';
 import { PRESETS, loadCustomPresets, type Preset } from '../engine/presets';
 import { Renderer } from '../engine/renderer';
-import { liveTip, type LiveTip } from '../ai/gemini';
-import type { Settings } from '../lib/storage';
+import { liveTip, type LiveTip } from '../ai/vision';
+import { hasAiKey, type Settings } from '../lib/storage';
 import { TwinBubble } from './Twins';
 import { useFit } from './useFit';
 
@@ -33,6 +33,7 @@ export function StudioCamera({ settings, onBack, onCapture, onPhoneCamera, toast
   const [tipLoading, setTipLoading] = useState(false);
   const [flash, setFlash] = useState(false);
   const [vAspect, setVAspect] = useState(0);
+  const [shake, setShake] = useState<number | null>(null);
   const viewRef = useRef<HTMLDivElement>(null);
   const fit = useFit(viewRef, vAspect);
   const presets = useMemo(() => [...PRESETS, ...loadCustomPresets()], []);
@@ -47,7 +48,7 @@ export function StudioCamera({ settings, onBack, onCapture, onPhoneCamera, toast
     let alive = true;
     setReady(false);
     navigator.mediaDevices
-      ?.getUserMedia({ video: { facingMode: facing, width: { ideal: 3840 }, height: { ideal: 2160 } }, audio: false })
+      ?.getUserMedia({ video: { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false })
       .then(async (s) => {
         if (!alive) { s.getTracks().forEach((t) => t.stop()); return; }
         stream = s;
@@ -66,25 +67,44 @@ export function StudioCamera({ settings, onBack, onCapture, onPhoneCamera, toast
   useEffect(() => {
     if (!ready || !canvasRef.current || !videoRef.current) return;
     let r: Renderer;
-    try { r = new Renderer(canvasRef.current); } catch (e) { setError((e as Error).message); return; }
+    try { r = new Renderer(canvasRef.current, false); } catch (e) { setError((e as Error).message); return; }
     const v = videoRef.current;
     let raf = 0, frame = 0;
     const loop = () => {
       const w = v.videoWidth, h = v.videoHeight;
       if (w && h) {
-        r.setSource(v, w, h);
-        const k = Math.min(1, 1280 / Math.max(w, h));
+        r.setSource(v, w, h, false);
+        const k = Math.min(1, 1024 / Math.max(w, h));
         const st = { ...initialEdit(), auto: autoRef.current, presetId: presetRef.current?.id ?? null };
         const adj = composeAdjustments(st, presetRef.current);
         r.render(adj, resolveCrop(defaultCrop(), w, h), Math.round(w * k), Math.round(h * k));
-        // Cada ~1.5 s recalculamos el "Auto Pro" con lo que ve la cámara
-        if (frame++ % 90 === 0) autoRef.current = analyzeImage(v, w, h).auto;
+        // Cada ~2.5 s recalculamos el "Auto Pro": leer los píxeles frena la GPU, así que va espaciado
+        if (frame++ % 150 === 0) autoRef.current = analyzeImage(v, w, h).auto;
       }
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
     return () => { cancelAnimationFrame(raf); r.dispose(); };
   }, [ready]);
+
+  // Estabilidad: qué tanto se mueve el teléfono en la mano
+  useEffect(() => {
+    let last: { x: number; y: number; z: number } | null = null;
+    let level = 0;
+    const onMotion = (e: DeviceMotionEvent) => {
+      const a = e.accelerationIncludingGravity;
+      if (!a || a.x == null || a.y == null || a.z == null) return;
+      const cur = { x: a.x, y: a.y, z: a.z };
+      if (last) {
+        const d = Math.abs(cur.x - last.x) + Math.abs(cur.y - last.y) + Math.abs(cur.z - last.z);
+        level = level * 0.8 + d * 0.2; // promedio suavizado para que no parpadee
+        setShake(level);
+      }
+      last = cur;
+    };
+    window.addEventListener('devicemotion', onMotion);
+    return () => window.removeEventListener('devicemotion', onMotion);
+  }, []);
 
   // Nivel de horizonte con el giroscopio
   useEffect(() => {
@@ -116,13 +136,13 @@ export function StudioCamera({ settings, onBack, onCapture, onPhoneCamera, toast
   };
 
   const askTip = async () => {
-    if (!settings.geminiKey) { toast('Pon tu API key de Gemini en Ajustes para pedir consejos.'); return; }
+    if (!hasAiKey(settings)) { toast('Pon tu API key en Ajustes para pedir consejos.'); return; }
     const c = grabFrame(768);
     if (!c) return;
     setTipLoading(true);
     try {
       const t = await liveTip({
-        apiKey: settings.geminiKey, model: settings.geminiModel,
+        settings,
         imageBase64: c.toDataURL('image/jpeg', 0.8).split(',')[1], styleName: preset?.name ?? 'natural',
       });
       setTip(t);
@@ -135,6 +155,8 @@ export function StudioCamera({ settings, onBack, onCapture, onPhoneCamera, toast
   };
 
   const level = tilt == null ? null : Math.abs(tilt) < 1.5;
+  const steady = shake == null ? null : shake < 0.45 ? 'ok' : shake < 1.3 ? 'mid' : 'bad';
+  const steadyText = { ok: 'Pulso firme ✓', mid: 'Casi firme…', bad: '¡Te mueves mucho!' } as const;
 
   return (
     <div className="camera">
@@ -157,13 +179,19 @@ export function StudioCamera({ settings, onBack, onCapture, onPhoneCamera, toast
       <header className="camera-top">
         <button className="icon" onClick={onBack} aria-label="Regresar"><ArrowLeft /></button>
         <span className="camera-title">Cámara Studio{level === false && tilt != null ? ` · ${tilt.toFixed(0)}°` : level ? ' · nivelada ✓' : ''}</span>
+        {steady && (
+          <span className={`steady ${steady}`} title="Qué tan firme tienes el pulso">
+            <i style={{ width: `${Math.max(6, 100 - Math.min(100, shake! * 60))}%` }} />
+            {steadyText[steady]}
+          </span>
+        )}
         <button className={`icon ${grid ? 'on' : ''}`} onClick={() => setGrid(!grid)} aria-label="Cuadrícula"><Grid3x3 /></button>
       </header>
 
       {tip && (
         <div className="camera-tips" onClick={() => setTip(null)}>
-          <TwinBubble id="aiko"><p>{tip.aiko}</p></TwinBubble>
-          <TwinBubble id="mei"><p>{tip.mei}</p></TwinBubble>
+          <TwinBubble id="tsuki"><p>{tip.tsuki}</p></TwinBubble>
+          <TwinBubble id="yami"><p>{tip.yami}</p></TwinBubble>
         </div>
       )}
 
@@ -186,7 +214,7 @@ export function StudioCamera({ settings, onBack, onCapture, onPhoneCamera, toast
           </button>
         </div>
         <button className="link small" onClick={onPhoneCamera}>
-          <Smartphone size={14} /> ¿Quieres máxima calidad o modo Pro? Usa la cámara del teléfono
+          <Smartphone size={14} /> Aquí el visor va en 1080p para ir fluido. Para máxima resolución y modo Pro (RAW, ISO, velocidad), usa la cámara del teléfono
         </button>
       </div>
     </div>

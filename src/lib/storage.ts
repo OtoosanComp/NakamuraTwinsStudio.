@@ -39,17 +39,40 @@ export const projects = {
 };
 
 export interface Settings {
+  provider: 'gemini' | 'groq';
   geminiKey: string;
   geminiModel: string;
+  groqKey: string;
+  groqModel: string;
   showTips: boolean;
 }
 
-export const GEMINI_MODELS = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-2.5-flash-lite'];
+/** Modelos que saben ver imágenes. Si cambian de nombre, en Ajustes puedes escribir otro. */
+export const AI_MODELS: Record<Settings['provider'], string[]> = {
+  gemini: ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-2.5-flash-lite'],
+  groq: ['qwen/qwen3.8-27b'],
+};
+
+export const PROVIDER_NAMES: Record<Settings['provider'], string> = { gemini: 'Gemini (Google)', groq: 'Groq' };
+
+export const KEY_URL: Record<Settings['provider'], string> = {
+  gemini: 'https://aistudio.google.com/apikey',
+  groq: 'https://console.groq.com/keys',
+};
+
+export function hasAiKey(s: Settings) {
+  return !!(s.provider === 'groq' ? s.groqKey : s.geminiKey);
+}
 
 const SETTINGS_KEY = 'nts.settings';
 
 export function loadSettings(): Settings {
-  const def: Settings = { geminiKey: '', geminiModel: GEMINI_MODELS[0], showTips: true };
+  const def: Settings = {
+    provider: 'gemini',
+    geminiKey: '', geminiModel: AI_MODELS.gemini[0],
+    groqKey: '', groqModel: AI_MODELS.groq[0],
+    showTips: true,
+  };
   try {
     return { ...def, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
   } catch {

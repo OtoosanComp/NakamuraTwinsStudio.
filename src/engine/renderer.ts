@@ -43,6 +43,7 @@ uniform float u_hslH[8], u_hslS[8], u_hslL[8], u_hslC[8];
 uniform vec3 u_gS, u_gM, u_gH;
 uniform float u_gBalance;
 uniform float u_clarity, u_dehaze, u_sharpen, u_fade, u_vignette, u_grain, u_grainSize, u_seed;
+uniform float u_denoise;
 
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 float luma(vec3 c) { return dot(c, LUMA); }
@@ -83,7 +84,16 @@ void main() {
     c += (c - n * 0.25) * u_sharpen * 1.6;
     c = clamp(c, 0.0, 1.0);
   }
-  float detail = luma(c) - luma(texture(u_blur, uv).rgb);
+  vec3 blurred = texture(u_blur, uv).rgb;
+  float detail = luma(c) - luma(blurred);
+
+  // --- Reduccion de ruido de color: en las sombras el color viene del promedio local,
+  // el brillo se conserva. Ataca las manchas de color del ISO alto sin perder detalle. ---
+  if (u_denoise > 0.0) {
+    float lc = luma(c);
+    float w = u_denoise * (1.0 - smoothstep(0.0, 0.5, lc));
+    c = mix(c, blurred * (lc / max(luma(blurred), 0.004)), w);
+  }
 
   // --- Exposición y balance de blancos (en luz lineal) ---
   vec3 lin = pow(c, vec3(2.2)) * exp2(u_exposure);
@@ -152,6 +162,7 @@ void main() {
   float ws = 1.0 - smoothstep(0.0, pivot, L);
   float wh = smoothstep(pivot, 1.0, L);
   float wm = max(0.0, 1.0 - ws - wh);
+  ws *= smoothstep(0.0, 0.06, L); // el negro puro no se tine: evita el velo azul sobre el ruido
   c += u_gS * ws + u_gM * wm + u_gH * wh;
 
   // --- Desvanecer (negros mate) ---
@@ -220,9 +231,11 @@ export class Renderer {
   private srcW = 0; private srcH = 0;
   private a: Target | null = null; private b: Target | null = null;
   private seed = Math.random() * 100;
+  private mipmapped = true;
 
-  constructor(readonly canvas: HTMLCanvasElement) {
-    const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: true, antialias: false, premultipliedAlpha: false });
+  constructor(readonly canvas: HTMLCanvasElement, readable = true) {
+    // readable=false (camara en vivo) evita que el driver conserve el buffer: mas fps en el telefono
+    const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: readable, antialias: false, premultipliedAlpha: false });
     if (!gl) throw new Error('Tu dispositivo no soporta WebGL2.');
     this.gl = gl;
     this.maxTexture = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number;
@@ -238,14 +251,16 @@ export class Renderer {
 
   get sourceSize() { return { w: this.srcW, h: this.srcH }; }
 
-  setSource(img: TexImageSource, w: number, h: number) {
+  /** mipmap=false para video en vivo: generateMipmap cada cuadro es lo que hace lento el visor. */
+  setSource(img: TexImageSource, w: number, h: number, mipmap = true) {
     const gl = this.gl;
     if (!this.src) this.src = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.src);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-    gl.generateMipmap(gl.TEXTURE_2D);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    if (mipmap) gl.generateMipmap(gl.TEXTURE_2D);
+    this.mipmapped = mipmap;
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, mipmap ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
@@ -293,7 +308,7 @@ export class Renderer {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.src);
     gl.uniform1i(this.down.u('u_src'), 0);
-    gl.uniform1f(this.down.u('u_lod'), 3);
+    gl.uniform1f(this.down.u('u_lod'), this.mipmapped ? 3 : 0);
     draw();
     gl.useProgram(this.blur.p);
     gl.uniform1i(this.blur.u('u_src'), 0);
@@ -341,6 +356,7 @@ export class Renderer {
     f('u_vignette', adj.vignette / 100);
     f('u_grain', adj.grain / 100);
     f('u_grainSize', adj.grainSize / 100);
+    f('u_denoise', adj.denoise / 100);
     f('u_seed', this.seed);
     f('u_gBalance', adj.gradeBalance / 100);
     gl.uniform3fv(m.u('u_gS'), hueOffset(adj.gradeShadowHue, adj.gradeShadowSat / 100));

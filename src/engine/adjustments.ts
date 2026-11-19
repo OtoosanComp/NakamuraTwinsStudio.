@@ -19,7 +19,7 @@ export type AdjKey =
   | `hsl_${HslColorId}_h` | `hsl_${HslColorId}_s` | `hsl_${HslColorId}_l`
   | 'gradeShadowHue' | 'gradeShadowSat' | 'gradeMidHue' | 'gradeMidSat'
   | 'gradeHighHue' | 'gradeHighSat' | 'gradeBalance'
-  | 'clarity' | 'dehaze' | 'sharpen' | 'fade' | 'vignette' | 'grain' | 'grainSize';
+  | 'clarity' | 'dehaze' | 'sharpen' | 'fade' | 'vignette' | 'grain' | 'grainSize' | 'denoise';
 
 export type Adjustments = Record<AdjKey, number>;
 export type PartialAdj = Partial<Adjustments>;
@@ -122,6 +122,13 @@ export const COLOR: SliderDef[] = [
 ];
 
 export const EFFECTS: SliderDef[] = [
+  {
+    key: 'denoise', label: 'Reducir ruido', min: 0, max: 100, step: 1,
+    what: 'Quita las manchas de color que salen en las zonas oscuras cuando disparas con ISO alto.',
+    up: 'Sombras limpias y parejas, sin manchas azules o verdes.',
+    down: 'Deja el ruido tal cual viene de la camara.',
+    tip: 'Arriba de ISO 1600 casi siempre hace falta. Si te pasas, los colores finos de las sombras se aplanan.',
+  },
   {
     key: 'clarity', label: 'Claridad', min: -100, max: 100, step: 1,
     what: 'El contraste en los detalles medianos: texturas, arrugas, bordes.',

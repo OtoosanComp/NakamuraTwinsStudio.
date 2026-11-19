@@ -8,7 +8,7 @@ export interface Analysis {
 }
 
 /** Analiza una versión pequeña de la foto y propone una corrección base, como lo haría un fotógrafo. */
-export function analyzeImage(source: CanvasImageSource, w: number, h: number): Analysis {
+export function analyzeImage(source: CanvasImageSource, w: number, h: number, iso?: number): Analysis {
   const S = 256;
   const k = Math.min(1, S / Math.max(w, h));
   const cw = Math.max(1, Math.round(w * k)), ch = Math.max(1, Math.round(h * k));
@@ -71,6 +71,11 @@ export function analyzeImage(source: CanvasImageSource, w: number, h: number): A
   // Color apagado
   if (meanSat < 0.18) { auto.vibrance = Math.round(clamp((0.22 - meanSat) * 150, 5, 30)); notes.push('Colores apagados: subí la intensidad.'); }
   auto.sharpen = 15;
+  // El ruido de la camara crece con el ISO, asi que lo limpiamos en proporcion.
+  if (iso && iso >= 800) {
+    auto.denoise = Math.round(clamp(Math.log2(iso / 400) * 22, 15, 75));
+    notes.push(`Disparaste con ISO ${iso}: limpie el ruido de color de las sombras.`);
+  }
   if (!notes.length) notes.push('¡La foto ya venía bien expuesta! Solo la afiné un poco.');
 
   const hmax = Math.max(...hist.slice(2, 254), 1);

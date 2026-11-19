@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 import { ArrowLeft, Aperture, Camera, Images, Settings as Gear, Trash2, ExternalLink, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { TWINS } from '../ai/twins';
-import { projects, GEMINI_MODELS, type Project, type Settings } from '../lib/storage';
+import { projects, AI_MODELS, KEY_URL, PROVIDER_NAMES, hasAiKey, type Project, type Settings } from '../lib/storage';
 import { TwinAvatar, TwinBubble } from './Twins';
 
 const GREETINGS = [
-  ['¿Qué vamos a fotografiar hoy? ¡Busca líneas que lleven la mirada!', 'Recuerda: la mejor luz es una hora antes del atardecer.'],
-  ['¡Ojo con el horizonte! Que quede derechito.', 'Si la foto sale muy clara, baja las altas luces antes que la exposición.'],
-  ['Acércate más. Si tu foto no es buena, es que no estabas lo bastante cerca.', 'De noche, sube un poco el ISO pero no te pases de 1600.'],
-  ['Prueba agacharte: las fotos desde abajo se ven más épicas.', 'Los colores opuestos (azul y naranja) siempre se ven de cine.'],
+  ['La regla de tercios es pura división: parte la foto en 9 y pon lo importante en las líneas.', '¡Busca color! Un traje claro contra un fondo oscuro siempre gana.'],
+  ['Si el horizonte se inclina más de 2°, se nota. Usa el nivel de la Cámara Studio.', 'La pose manda: manos relajadas y peso en una pierna se ve natural.'],
+  ['Sin tripié no bajes de 1/60 s, o la foto sale movida.', 'Acércate más. Si tu foto no es buena, no estabas lo bastante cerca.'],
+  ['Composición con ritmo: repetir una forma 3 veces guía la mirada como un compás.', 'Los colores opuestos (azul y naranja) siempre se ven de cine.'],
 ];
 
 export function Home({ onGallery, onPhoneCamera, onStudioCamera, onLibrary, onSettings, onOpenProject, hasKey }: {
@@ -35,13 +35,13 @@ export function Home({ onGallery, onPhoneCamera, onStudioCamera, onLibrary, onSe
       </header>
 
       <div className="home-twins">
-        <TwinBubble id="aiko"><p>{g[0]}</p></TwinBubble>
-        <TwinBubble id="mei"><p>{g[1]}</p></TwinBubble>
+        <TwinBubble id="tsuki"><p>{g[0]}</p></TwinBubble>
+        <TwinBubble id="yami"><p>{g[1]}</p></TwinBubble>
       </div>
 
       {!hasKey && (
         <button className="notice" onClick={onSettings}>
-          ✨ Conecta tu API key de Gemini para que {TWINS.aiko.name} y {TWINS.mei.name} vean tus fotos y te den consejos.
+          ✨ Conecta tu API key (Gemini o Groq) para que {TWINS.tsuki.name} y {TWINS.yami.name} vean tus fotos y te den consejos.
         </button>
       )}
 
@@ -120,16 +120,29 @@ export function SettingsScreen({ settings, onChange, onBack }: {
 }) {
   const [show, setShow] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
-  const custom = !GEMINI_MODELS.includes(settings.geminiModel);
+  const groq = settings.provider === 'groq';
+  const key = groq ? settings.groqKey : settings.geminiKey;
+  const model = groq ? settings.groqModel : settings.geminiModel;
+  const custom = !AI_MODELS[settings.provider].includes(model);
+  const setKey = (v: string) => onChange({ ...settings, [groq ? 'groqKey' : 'geminiKey']: v.trim() });
+  const setModel = (v: string) => onChange({ ...settings, [groq ? 'groqModel' : 'geminiModel']: v.trim() });
 
   const test = async () => {
     setTesting('Probando…');
     try {
-      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(settings.geminiModel)}`, {
-        headers: { 'x-goog-api-key': settings.geminiKey },
-      });
+      const r = groq
+        ? await fetch('https://api.groq.com/openai/v1/models', { headers: { Authorization: `Bearer ${key}` } })
+        : await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}`, {
+            headers: { 'x-goog-api-key': key },
+          });
       const b = await r.json().catch(() => ({}));
-      setTesting(r.ok ? `✅ Conectado: ${b.displayName ?? settings.geminiModel}` : `❌ ${b?.error?.message ?? r.statusText}`);
+      if (!r.ok) { setTesting(`❌ ${b?.error?.message ?? r.statusText}`); return; }
+      const ids: string[] = groq ? (b.data ?? []).map((m: { id: string }) => m.id) : [];
+      if (groq && ids.length && !ids.includes(model)) {
+        setTesting(`⚠️ La key sirve, pero "${model}" no está en tu cuenta. Modelos con imagen: ${ids.filter((i) => /vision|qwen|llava|scout|maverick|muse/i.test(i)).join(', ') || ids.slice(0, 6).join(', ')}`);
+        return;
+      }
+      setTesting(`✅ Conectado: ${b.displayName ?? model}`);
     } catch {
       setTesting('❌ Sin conexión a internet.');
     }
@@ -144,43 +157,50 @@ export function SettingsScreen({ settings, onChange, onBack }: {
       </header>
 
       <section className="card">
-        <div className="twins-pair"><TwinAvatar id="aiko" size={44} /><TwinAvatar id="mei" size={44} /></div>
-        <h3>Inteligencia artificial (Gemini)</h3>
+        <div className="twins-pair"><TwinAvatar id="tsuki" size={44} /><TwinAvatar id="yami" size={44} /></div>
+        <h3>Inteligencia artificial</h3>
         <p className="muted small">
-          Tu API key se guarda solo en este teléfono y se usa para mandar a Gemini una copia pequeña de la foto cuando
-          pides consejos. Consíguela gratis en Google AI Studio.
+          Tu API key se guarda solo en este teléfono y se usa para mandar una copia pequeña de la foto cuando pides
+          consejos. Puedes tener las dos guardadas y cambiar de proveedor cuando se te acabe la cuota de una.
         </p>
-        <a className="link small" href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">
-          <ExternalLink size={14} /> aistudio.google.com/apikey
+        <div className="chips">
+          {(['gemini', 'groq'] as const).map((p) => (
+            <button
+              key={p}
+              className={`chip ${settings.provider === p ? 'active' : ''}`}
+              onClick={() => onChange({ ...settings, provider: p })}
+            >
+              {PROVIDER_NAMES[p]}{(p === 'groq' ? settings.groqKey : settings.geminiKey) ? ' ✓' : ''}
+            </button>
+          ))}
+        </div>
+        <a className="link small" href={KEY_URL[settings.provider]} target="_blank" rel="noreferrer">
+          <ExternalLink size={14} /> Consigue tu key gratis en {KEY_URL[settings.provider].replace('https://', '')}
         </a>
         <label className="field">
-          <span>API key</span>
+          <span>API key de {PROVIDER_NAMES[settings.provider]}</span>
           <div className="row">
             <input
               type={show ? 'text' : 'password'}
-              value={settings.geminiKey}
-              placeholder="AIza…"
+              value={key}
+              placeholder={groq ? 'gsk_…' : 'AIza…'}
               autoComplete="off"
-              onChange={(e) => onChange({ ...settings, geminiKey: e.target.value.trim() })}
+              onChange={(e) => setKey(e.target.value)}
             />
             <button className="icon" onClick={() => setShow(!show)} aria-label="Mostrar">{show ? <EyeOff /> : <Eye />}</button>
           </div>
         </label>
         <label className="field">
           <span>Modelo</span>
-          <select
-            value={custom ? '__custom' : settings.geminiModel}
-            onChange={(e) => onChange({ ...settings, geminiModel: e.target.value === '__custom' ? '' : e.target.value })}
-          >
-            {GEMINI_MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
+          <select value={custom ? '__custom' : model} onChange={(e) => setModel(e.target.value === '__custom' ? '' : e.target.value)}>
+            {AI_MODELS[settings.provider].map((m) => <option key={m} value={m}>{m}</option>)}
             <option value="__custom">Otro…</option>
           </select>
-          {custom && (
-            <input value={settings.geminiModel} placeholder="nombre-del-modelo" onChange={(e) => onChange({ ...settings, geminiModel: e.target.value.trim() })} />
-          )}
+          {custom && <input value={model} placeholder="nombre-del-modelo" onChange={(e) => setModel(e.target.value)} />}
         </label>
-        <button className="btn" onClick={test} disabled={!settings.geminiKey || !settings.geminiModel}>Probar conexión</button>
+        <button className="btn" onClick={test} disabled={!key || !model}>Probar conexión</button>
         {testing && <p className="small">{testing}</p>}
+        {!hasAiKey(settings) && <p className="muted small">Sin key, las gemelas no pueden ver tus fotos; lo demás funciona igual.</p>}
       </section>
 
       <section className="card">

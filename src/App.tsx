@@ -4,7 +4,7 @@ import { Editor, type EditorSource } from './ui/Editor';
 import { StudioCamera } from './ui/StudioCamera';
 import { Home, Library, SettingsScreen } from './ui/Screens';
 import { pickFromGallery, takeWithPhoneCamera, isNative } from './lib/platform';
-import { loadSettings, saveSettings, type Project, type Settings } from './lib/storage';
+import { hasAiKey, loadSettings, saveSettings, type Project, type Settings } from './lib/storage';
 
 type Screen =
   | { name: 'home' }
@@ -60,7 +60,7 @@ export default function App() {
     case 'home':
       view = (
         <Home
-          hasKey={!!settings.geminiKey}
+          hasKey={hasAiKey(settings)}
           onGallery={fromGallery}
           onPhoneCamera={() => fromPhoneCamera()}
           onStudioCamera={() => push({ name: 'camera' })}

@@ -280,3 +280,11 @@ input[type='range']::-moz-range-thumb { width: 18px; height: 18px; border-radius
 .level.ok span { background: #4ade80; height: 3px; }
 .flash { position: absolute; inset: 0; background: #fff; opacity: 0.7; }
 .center-abs { position: absolute; margin: 20px; }
+
+/* Medidor de pulso firme en la cámara */
+.steady { font-size: 0.68em; display: grid; gap: 3px; justify-items: center; min-width: 86px; color: var(--muted); }
+.steady i { display: block; height: 3px; border-radius: 2px; background: currentColor; transition: width 0.15s; }
+.steady.ok { color: #4ade80; }
+.steady.mid { color: #ffd479; }
+.steady.bad { color: #ff7a7a; }
+.camera-top { gap: 6px; }

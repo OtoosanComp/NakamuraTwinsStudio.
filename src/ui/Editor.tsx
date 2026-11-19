@@ -17,8 +17,8 @@ import {
   PREVIEW_MAX, exportJpeg, formatShutter, loadPhoto, outputSize, smallJpegBase64, type LoadedPhoto,
 } from '../lib/image';
 import { saveToGallery, shareImage } from '../lib/platform';
-import { projects, uid, type Settings } from '../lib/storage';
-import { reviewPhoto, type TwinsReview } from '../ai/gemini';
+import { hasAiKey, projects, uid, type Settings } from '../lib/storage';
+import { reviewPhoto, type TwinsReview } from '../ai/vision';
 import { Slider } from './Slider';
 import { EXIF_LESSONS, LearnBubble, learnFromSlider, type LearnInfo } from './Learn';
 import { TwinAvatar, TwinBubble } from './Twins';
@@ -95,7 +95,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     loadPhoto(source.blob)
       .then((p) => {
         if (!alive) return;
-        const a = analyzeImage(p.preview, p.previewW, p.previewH);
+        const a = analyzeImage(p.preview, p.previewW, p.previewH, p.exif.iso);
         setPhoto(p);
         setAnalysis(a);
         setEdit((st) => (source.edit ? { ...st, auto: a.auto } : { ...st, auto: a.auto, presetId: source.presetId ?? null }));
@@ -316,12 +316,12 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
   // ---------- Gemelas (IA) ----------
   const askTwins = async () => {
     if (!photo) return;
-    if (!settings.geminiKey) { onOpenSettings(); return; }
+    if (!hasAiKey(settings)) { onOpenSettings(); return; }
     setReviewLoading(true);
     setReviewError(null);
     try {
       const r = await reviewPhoto({
-        apiKey: settings.geminiKey, model: settings.geminiModel,
+        settings,
         imageBase64: smallJpegBase64(photo.preview, photo.previewW, photo.previewH, 1024),
         exif: photo.exif, presets: allPresets, currentPresetId: edit.presetId,
       });
@@ -477,9 +477,9 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
           <div className="panel">
             {!review && !reviewLoading && (
               <div className="twins-intro">
-                <div className="twins-pair"><TwinAvatar id="aiko" size={56} /><TwinAvatar id="mei" size={56} /></div>
+                <div className="twins-pair"><TwinAvatar id="tsuki" size={56} /><TwinAvatar id="yami" size={56} /></div>
                 <p>Las gemelas ven tu foto y te dicen cómo mejorar el <b>encuadre</b>, la <b>luz</b> y el <b>color</b>, y qué estilo le queda mejor.</p>
-                {!settings.geminiKey && <p className="muted small">Necesitas poner tu API key de Gemini en Ajustes.</p>}
+                {!hasAiKey(settings) && <p className="muted small">Necesitas poner tu API key en Ajustes.</p>}
               </div>
             )}
             {reviewError && <p className="error">{reviewError}</p>}
@@ -489,7 +489,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
             {review && <ReviewView review={review} presets={allPresets}
               onPreset={(id) => { const p = allPresets.find((x) => x.id === id); if (p) choosePreset(p); }}
               onCrop={applyReviewCrop}
-              onAdjust={() => { apply((s) => addToUser(s, review.ajustes)); toast('Apliqué los ajustes que sugirió Mei. Mira qué cambió en cada pestaña.'); }}
+              onAdjust={() => { apply((s) => addToUser(s, review.ajustes)); toast('Apliqué los ajustes que sugirió Yami. Mira qué cambió en cada pestaña.'); }}
             />}
           </div>
         );
@@ -626,28 +626,28 @@ function ReviewView({ review, presets, onPreset, onCrop, onAdjust }: {
         {score('Luz', review.puntuacion.luz)}
         {score('Color', review.puntuacion.color)}
       </div>
-      <TwinBubble id="aiko">
-        <p>{review.aiko.resumen}</p>
-        <ul>{review.aiko.consejos.map((c, i) => <li key={i}>{c}</li>)}</ul>
-        {review.aiko.proxima_vez && <p className="next">📸 Próxima vez: {review.aiko.proxima_vez}</p>}
+      <TwinBubble id="tsuki">
+        <p>{review.tsuki.resumen}</p>
+        <ul>{review.tsuki.consejos.map((c, i) => <li key={i}>{c}</li>)}</ul>
+        {review.tsuki.proxima_vez && <p className="next">📸 Próxima vez: {review.tsuki.proxima_vez}</p>}
         {review.recorte && (
           <>
             <p className="small">✂️ {review.recorte.porque}</p>
-            <button className="btn small" onClick={onCrop}><Crop size={14} /> Aplicar recorte de Aiko ({review.recorte.aspecto})</button>
+            <button className="btn small" onClick={onCrop}><Crop size={14} /> Aplicar recorte de Tsuki ({review.recorte.aspecto})</button>
           </>
         )}
       </TwinBubble>
-      <TwinBubble id="mei">
-        <p>{review.mei.resumen}</p>
-        <ul>{review.mei.consejos.map((c, i) => <li key={i}>{c}</li>)}</ul>
-        {review.mei.proxima_vez && <p className="next">💡 Próxima vez: {review.mei.proxima_vez}</p>}
+      <TwinBubble id="yami">
+        <p>{review.yami.resumen}</p>
+        <ul>{review.yami.consejos.map((c, i) => <li key={i}>{c}</li>)}</ul>
+        {review.yami.proxima_vez && <p className="next">💡 Próxima vez: {review.yami.proxima_vez}</p>}
         {p && (
           <>
             <p className="small">🎨 Estilo recomendado: <b>{p.name}</b>. {review.estilo.porque}</p>
             <button className="btn small" onClick={() => onPreset(p.id)}><Film size={14} /> Usar {p.name}</button>
           </>
         )}
-        {nAdj > 0 && <button className="btn small" onClick={onAdjust}><Wand2 size={14} /> Aplicar los {nAdj} ajustes de Mei</button>}
+        {nAdj > 0 && <button className="btn small" onClick={onAdjust}><Wand2 size={14} /> Aplicar los {nAdj} ajustes de Yami</button>}
       </TwinBubble>
       {review.leccion && <div className="lesson"><b>📚 Lección del día</b><p>{review.leccion}</p></div>}
     </div>
