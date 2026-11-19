@@ -34,7 +34,7 @@ void main() {
 const MAIN = `#version 300 es
 precision highp float;
 in vec2 v_uv; out vec4 o;
-uniform sampler2D u_src, u_blur;
+uniform sampler2D u_src, u_blur, u_mask;
 uniform vec2 u_srcSize, u_outSize, u_cropCenter, u_cropSize;
 uniform float u_angle, u_bypass;
 uniform float u_exposure, u_contrast, u_highlights, u_shadows, u_whites, u_blacks;
@@ -44,6 +44,8 @@ uniform vec3 u_gS, u_gM, u_gH;
 uniform float u_gBalance;
 uniform float u_clarity, u_dehaze, u_sharpen, u_fade, u_vignette, u_grain, u_grainSize, u_seed;
 uniform float u_denoise;
+uniform float u_hasMask, u_showMask, u_maskFeather;
+uniform float u_bgExposure, u_bgBlur, u_bgSaturation, u_subjExposure, u_subjClarity;
 
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 float luma(vec3 c) { return dot(c, LUMA); }
@@ -73,14 +75,27 @@ void main() {
   float cs = cos(u_angle), sn = sin(u_angle);
   vec2 p = u_cropCenter + vec2(q.x * cs - q.y * sn, q.x * sn + q.y * cs);
   vec2 uv = p / u_srcSize;
-  vec3 c = texture(u_src, uv).rgb;
+
+  // --- Mascara del sujeto (1 = persona, 0 = fondo) ---
+  float m = 1.0, bg = 0.0;
+  if (u_hasMask > 0.5) {
+    float e = 0.02 + u_maskFeather * 0.45;
+    m = smoothstep(0.5 - e, 0.5 + e, texture(u_mask, uv).r);
+    bg = 1.0 - m;
+    if (u_showMask > 0.5) { o = vec4(vec3(m), 1.0); return; }
+  }
+
+  // El desenfoque del fondo se toma de los niveles reducidos de la textura, asi que es casi gratis.
+  float lod = u_bgBlur * bg * 6.0;
+  vec3 c = textureLod(u_src, uv, lod).rgb;
   if (u_bypass > 0.5) { o = vec4(c, 1.0); return; }
 
   // --- Nitidez (máscara de enfoque) ---
+  // Los vecinos se leen al mismo nivel, para no volver a afilar el fondo ya desenfocado.
   vec2 t = 1.0 / u_srcSize;
   if (u_sharpen > 0.0) {
-    vec3 n = texture(u_src, uv + vec2(t.x, 0)).rgb + texture(u_src, uv - vec2(t.x, 0)).rgb
-           + texture(u_src, uv + vec2(0, t.y)).rgb + texture(u_src, uv - vec2(0, t.y)).rgb;
+    vec3 n = textureLod(u_src, uv + vec2(t.x, 0), lod).rgb + textureLod(u_src, uv - vec2(t.x, 0), lod).rgb
+           + textureLod(u_src, uv + vec2(0, t.y), lod).rgb + textureLod(u_src, uv - vec2(0, t.y), lod).rgb;
     c += (c - n * 0.25) * u_sharpen * 1.6;
     c = clamp(c, 0.0, 1.0);
   }
@@ -96,7 +111,7 @@ void main() {
   }
 
   // --- Exposición y balance de blancos (en luz lineal) ---
-  vec3 lin = pow(c, vec3(2.2)) * exp2(u_exposure);
+  vec3 lin = pow(c, vec3(2.2)) * exp2(u_exposure + u_subjExposure * m + u_bgExposure * bg);
   vec3 wb = vec3(1.0 + 0.32 * u_temp + 0.08 * u_tint, 1.0 - 0.18 * u_tint, 1.0 - 0.32 * u_temp + 0.08 * u_tint);
   lin *= wb / luma(wb);
   c = pow(max(lin, 0.0), vec3(1.0 / 2.2));
@@ -126,7 +141,7 @@ void main() {
   // --- Claridad (contraste local en medios tonos) ---
   L = clamp(luma(c), 0.0, 1.0);
   float mid = 1.0 - pow(abs(2.0 * L - 1.0), 2.0);
-  c += detail * u_clarity * 1.4 * mid;
+  c += detail * (u_clarity + u_subjClarity * m) * 1.4 * mid;
 
   // --- Contraste ---
   c = clamp(c, 0.0, 1.0);
@@ -155,6 +170,7 @@ void main() {
   float vib = u_vibrance * (u_vibrance > 0.0 ? (1.0 - sat) * (1.0 - sat) : 1.0);
   c = mix(vec3(gray), c, 1.0 + vib);
   c = mix(vec3(luma(c)), c, 1.0 + u_saturation);
+  if (u_hasMask > 0.5) c = mix(vec3(luma(c)), c, 1.0 + u_bgSaturation * bg);
 
   // --- Gradación de color (sombras / medios / luces) ---
   L = clamp(luma(c), 0.0, 1.0);
@@ -228,6 +244,7 @@ export class Renderer {
   readonly maxTexture: number;
   private main; private down; private blur;
   private src: WebGLTexture | null = null;
+  private mask: WebGLTexture | null = null;
   private srcW = 0; private srcH = 0;
   private a: Target | null = null; private b: Target | null = null;
   private seed = Math.random() * 100;
@@ -272,6 +289,26 @@ export class Renderer {
     }
   }
 
+  /** Mascara del sujeto en blanco y negro, del mismo encuadre que la foto. null la quita. */
+  setMask(img: TexImageSource | null) {
+    const gl = this.gl;
+    if (!img) {
+      if (this.mask) gl.deleteTexture(this.mask);
+      this.mask = null;
+      return;
+    }
+    if (!this.mask) this.mask = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.mask);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  }
+
+  get hasMask() { return !!this.mask; }
+
   private target(w: number, h: number): Target {
     const gl = this.gl;
     const tex = gl.createTexture()!;
@@ -294,7 +331,7 @@ export class Renderer {
     this.gl.deleteFramebuffer(t.fb);
   }
 
-  render(adj: Adjustments, crop: CropRect, outW: number, outH: number, bypass = false) {
+  render(adj: Adjustments, crop: CropRect, outW: number, outH: number, bypass = false, showMask = false) {
     const gl = this.gl;
     if (!this.src || !this.a || !this.b) return;
     if (this.canvas.width !== outW) this.canvas.width = outW;
@@ -332,6 +369,11 @@ export class Renderer {
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.a.tex);
     gl.uniform1i(m.u('u_blur'), 1);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this.mask);
+    gl.uniform1i(m.u('u_mask'), 2);
+    gl.uniform1f(m.u('u_hasMask'), this.mask ? 1 : 0);
+    gl.uniform1f(m.u('u_showMask'), showMask ? 1 : 0);
     gl.uniform2f(m.u('u_srcSize'), this.srcW, this.srcH);
     gl.uniform2f(m.u('u_outSize'), outW, outH);
     gl.uniform2f(m.u('u_cropCenter'), crop.cx, crop.cy);
@@ -357,6 +399,12 @@ export class Renderer {
     f('u_grain', adj.grain / 100);
     f('u_grainSize', adj.grainSize / 100);
     f('u_denoise', adj.denoise / 100);
+    f('u_maskFeather', adj.maskFeather / 100);
+    f('u_bgExposure', adj.bgExposure);
+    f('u_bgBlur', adj.bgBlur / 100);
+    f('u_bgSaturation', adj.bgSaturation / 100);
+    f('u_subjExposure', adj.subjExposure);
+    f('u_subjClarity', adj.subjClarity / 100);
     f('u_seed', this.seed);
     f('u_gBalance', adj.gradeBalance / 100);
     gl.uniform3fv(m.u('u_gS'), hueOffset(adj.gradeShadowHue, adj.gradeShadowSat / 100));
@@ -373,8 +421,9 @@ export class Renderer {
   dispose(loseContext = false) {
     const gl = this.gl;
     if (this.src) gl.deleteTexture(this.src);
+    if (this.mask) gl.deleteTexture(this.mask);
     this.freeTarget(this.a); this.freeTarget(this.b);
-    this.src = null; this.a = null; this.b = null;
+    this.src = null; this.mask = null; this.a = null; this.b = null;
     if (loseContext) gl.getExtension('WEBGL_lose_context')?.loseContext();
   }
 }

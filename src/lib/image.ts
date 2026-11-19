@@ -136,7 +136,7 @@ export function outputSize(crop: CropState, srcW: number, srcH: number, maxSide:
 }
 
 /** Revela la foto en alta resolución y la devuelve como JPEG. */
-export async function exportJpeg(photo: LoadedPhoto, adj: Adjustments, crop: CropState, quality = 0.95): Promise<Blob> {
+export async function exportJpeg(photo: LoadedPhoto, adj: Adjustments, crop: CropState, mask?: TexImageSource | null, quality = 0.95): Promise<Blob> {
   const canvas = document.createElement('canvas');
   const r = new Renderer(canvas);
   try {
@@ -144,6 +144,7 @@ export async function exportJpeg(photo: LoadedPhoto, adj: Adjustments, crop: Cro
     const meta = await readJpegMeta(photo.blob).catch(() => ({ exif: {} as ExifInfo }));
     const { bmp } = await decode(photo.blob, maxSide, meta);
     r.setSource(bmp, bmp.width, bmp.height);
+    r.setMask(mask ?? null);
     const { rect, w, h } = outputSize(crop, bmp.width, bmp.height, maxSide);
     r.render(adj, rect, w, h);
     bmp.close();

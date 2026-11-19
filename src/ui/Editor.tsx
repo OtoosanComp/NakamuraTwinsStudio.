@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft, Undo2, Redo2, Eye, Save, Download, Share2, MoreVertical, Sparkles, Sun, Palette,
-  Droplets, SlidersHorizontal, Crop, Film, Wand2, RotateCcw, Copy, ClipboardPaste, Grid3x3, Loader2, Trash2,
+  Droplets, SlidersHorizontal, Crop, Film, Wand2, RotateCcw, Copy, ClipboardPaste, Grid3x3, Loader2, Trash2, Users,
 } from 'lucide-react';
 import {
-  ASPECTS, COLOR, EFFECTS, GRADING, HSL_COLORS, LIGHT, ALL_DEFS, defaultCrop, hslDefs, neutral,
+  ASPECTS, COLOR, EFFECTS, GRADING, HSL_COLORS, LIGHT, MASK, ALL_DEFS, defaultCrop, hslDefs, neutral,
   resolveCrop, type CropState, type PartialAdj, type SliderDef, type Adjustments,
 } from '../engine/adjustments';
 import { analyzeImage, type Analysis } from '../engine/analyze';
@@ -12,6 +12,7 @@ import {
   addToUser, baseValue, composeAdjustments, initialEdit, resetKey, setFinalValue, type EditState,
 } from '../engine/editState';
 import { PRESETS, loadCustomPresets, saveCustomPresets, type Preset } from '../engine/presets';
+import { personMask } from '../engine/segment';
 import { Renderer } from '../engine/renderer';
 import {
   PREVIEW_MAX, exportJpeg, formatShutter, loadPhoto, outputSize, smallJpegBase64, type LoadedPhoto,
@@ -31,7 +32,7 @@ export interface EditorSource {
   presetId?: string | null;
 }
 
-type Tab = 'estilos' | 'luz' | 'color' | 'mezcla' | 'gradacion' | 'efectos' | 'recorte' | 'gemelas';
+type Tab = 'estilos' | 'luz' | 'color' | 'mezcla' | 'gradacion' | 'efectos' | 'sujeto' | 'recorte' | 'gemelas';
 
 const TABS: { id: Tab; label: string; icon: typeof Sun }[] = [
   { id: 'estilos', label: 'Estilos', icon: Film },
@@ -41,6 +42,7 @@ const TABS: { id: Tab; label: string; icon: typeof Sun }[] = [
   { id: 'mezcla', label: 'Mezcla', icon: Droplets },
   { id: 'gradacion', label: 'Gradación', icon: SlidersHorizontal },
   { id: 'efectos', label: 'Efectos', icon: Wand2 },
+  { id: 'sujeto', label: 'Sujeto', icon: Users },
   { id: 'recorte', label: 'Recorte', icon: Crop },
 ];
 
@@ -75,6 +77,10 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
   const [grid, setGrid] = useState(false);
   const [hist, setHist] = useState<number[][] | null>(null);
   const [newPresetName, setNewPresetName] = useState('');
+  const [mask, setMask] = useState<HTMLCanvasElement | null>(null);
+  const [maskBusy, setMaskBusy] = useState(false);
+  const [maskError, setMaskError] = useState<string | null>(null);
+  const [showMask, setShowMask] = useState(false);
   const dragStart = useRef<EditState | null>(null);
   const learnTimer = useRef<number>();
 
@@ -116,16 +122,42 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     return () => { rendererRef.current?.dispose(); rendererRef.current = null; };
   }, [photo]);
 
+  // ---------- Máscara del sujeto ----------
+  useEffect(() => {
+    rendererRef.current?.setMask(edit.maskOn ? mask : null);
+  }, [mask, edit.maskOn, photo]);
+
+  const runMask = useCallback(async (silent = false) => {
+    if (!photo) return;
+    setMaskBusy(true);
+    setMaskError(null);
+    try {
+      const m = await personMask(photo.preview);
+      setMask(m);
+      if (!silent) setEdit((st) => ({ ...st, maskOn: true }));
+    } catch (e) {
+      setMaskError((e as Error).message);
+      if (silent) setEdit((st) => ({ ...st, maskOn: false }));
+    } finally {
+      setMaskBusy(false);
+    }
+  }, [photo]);
+
+  // Si abres una foto guardada que ya usaba la separación, la recalculamos sola.
+  useEffect(() => {
+    if (photo && edit.maskOn && !mask && !maskBusy && !maskError) runMask(true);
+  }, [photo, edit.maskOn, mask, maskBusy, maskError, runMask]);
+
   // ---------- Dibujar ----------
   useEffect(() => {
     const r = rendererRef.current;
     if (!r || !photo) return;
     const id = requestAnimationFrame(() => {
       const { rect, w, h } = outputSize(edit.crop, photo.previewW, photo.previewH, PREVIEW_MAX);
-      r.render(bypass ? neutral() : adj, rect, w, h, bypass);
+      r.render(bypass ? neutral() : adj, rect, w, h, bypass, showMask);
     });
     return () => cancelAnimationFrame(id);
-  }, [adj, edit.crop, bypass, photo]);
+  }, [adj, edit.crop, bypass, photo, mask, showMask]);
 
   // ---------- Histograma de la foto editada ----------
   useEffect(() => {
@@ -249,7 +281,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     setMenu(false);
     setBusy('Revelando en alta calidad…');
     try {
-      const jpeg = await exportJpeg(photo, adj, edit.crop);
+      const jpeg = await exportJpeg(photo, adj, edit.crop, edit.maskOn ? mask : null);
       if (mode === 'gallery') {
         const where = await saveToGallery(jpeg);
         toast(`¡Listo! Foto guardada en ${where}`);
@@ -436,6 +468,48 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
         );
       case 'efectos':
         return <div className="panel">{EFFECTS.map((d) => sliderFor(d))}</div>;
+      case 'sujeto':
+        return (
+          <div className="panel">
+            <p className="muted small">
+              El teléfono busca a las personas y las separa del fondo. Todo pasa dentro del teléfono: no se manda nada a internet.
+            </p>
+            {!mask && (
+              <button className="btn primary wide" onClick={() => runMask()} disabled={maskBusy}>
+                {maskBusy
+                  ? <><Loader2 className="spin" size={18} /> Buscando a las personas…</>
+                  : <><Users size={18} /> Separar sujeto del fondo</>}
+              </button>
+            )}
+            {maskError && <p className="error">{maskError}</p>}
+            {mask && (
+              <>
+                <div className="auto-row">
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      checked={edit.maskOn}
+                      onChange={(e) => apply((st) => ({ ...st, maskOn: e.target.checked }))}
+                    />
+                    <span /> Sujeto y fondo por separado
+                  </label>
+                  <button
+                    className="btn ghost small"
+                    onPointerDown={() => setShowMask(true)}
+                    onPointerUp={() => setShowMask(false)}
+                    onPointerLeave={() => setShowMask(false)}
+                  ><Eye size={14} /> Ver recorte</button>
+                </div>
+                {edit.maskOn
+                  ? MASK.map((d) => sliderFor(d))
+                  : <p className="muted small">Enciende el interruptor para ajustar al sujeto y al fondo por separado.</p>}
+                <button className="btn ghost small" onClick={() => { setMask(null); apply((st) => ({ ...st, maskOn: false })); }}>
+                  <RotateCcw size={14} /> Calcular de nuevo
+                </button>
+              </>
+            )}
+          </div>
+        );
       case 'recorte':
         return (
           <div className="panel">

@@ -2,8 +2,9 @@ import { useRef } from 'react';
 import type { SliderDef } from '../engine/adjustments';
 
 export function formatValue(def: SliderDef, v: number) {
-  if (def.key === 'exposure') return `${v > 0 ? '+' : ''}${v.toFixed(2)} EV`;
   if (def.absolute) return `${Math.round(v)}°`;
+  // Los controles de luz se miden en pasos (EV) y necesitan decimales: redondear los dejaría en 0.
+  if (def.step < 0.5) return `${v > 0 ? '+' : ''}${v.toFixed(2)}${/xposure/.test(def.key) ? ' EV' : ''}`;
   const r = Math.round(v);
   return def.min < 0 && r > 0 ? `+${r}` : `${r}`;
 }

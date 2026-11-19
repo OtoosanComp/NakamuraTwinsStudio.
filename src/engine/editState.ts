@@ -16,10 +16,12 @@ export interface EditState {
   amount: number; // 0..1.5
   user: PartialAdj;
   crop: CropState;
+  /** true = ya separaste al sujeto del fondo con la IA del teléfono */
+  maskOn: boolean;
 }
 
 export function initialEdit(): EditState {
-  return { autoOn: true, auto: {}, presetId: null, amount: 1, user: {}, crop: defaultCrop() };
+  return { autoOn: true, auto: {}, presetId: null, amount: 1, user: {}, crop: defaultCrop(), maskOn: false };
 }
 
 /** Valor antes de tus ajustes manuales (automático + estilo). */
@@ -27,7 +29,7 @@ export function baseValue(st: EditState, preset: Preset | undefined, key: AdjKey
   const def = DEF_BY_KEY[key];
   const n = neutral()[key];
   // Los tonos y el tamaño de grano son valores fijos, no se "suman"
-  if (def.absolute || key === 'grainSize') return preset?.adj[key] ?? n;
+  if (def.absolute || key === 'grainSize' || key === 'maskFeather') return preset?.adj[key] ?? n;
   const a = st.autoOn ? st.auto[key] ?? 0 : 0;
   const p = preset?.adj[key] ?? 0;
   return n + a + p * st.amount;

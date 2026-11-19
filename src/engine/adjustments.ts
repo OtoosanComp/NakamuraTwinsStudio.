@@ -19,7 +19,8 @@ export type AdjKey =
   | `hsl_${HslColorId}_h` | `hsl_${HslColorId}_s` | `hsl_${HslColorId}_l`
   | 'gradeShadowHue' | 'gradeShadowSat' | 'gradeMidHue' | 'gradeMidSat'
   | 'gradeHighHue' | 'gradeHighSat' | 'gradeBalance'
-  | 'clarity' | 'dehaze' | 'sharpen' | 'fade' | 'vignette' | 'grain' | 'grainSize' | 'denoise';
+  | 'clarity' | 'dehaze' | 'sharpen' | 'fade' | 'vignette' | 'grain' | 'grainSize' | 'denoise'
+  | 'bgExposure' | 'bgBlur' | 'bgSaturation' | 'subjExposure' | 'subjClarity' | 'maskFeather';
 
 export type Adjustments = Record<AdjKey, number>;
 export type PartialAdj = Partial<Adjustments>;
@@ -218,6 +219,50 @@ export const GRADING: SliderDef[] = [
   },
 ];
 
+/** Controles que solo funcionan cuando ya separaste al sujeto del fondo. */
+export const MASK: SliderDef[] = [
+  {
+    key: 'bgExposure', label: 'Fondo: luz', min: -3, max: 1, step: 0.05,
+    what: 'Aclara u oscurece SOLO el fondo, sin tocar a la persona.',
+    up: 'Fondo más claro.',
+    down: 'Fondo más oscuro: la persona resalta sola, como en estudio.',
+    tip: 'Bajar el fondo entre -0.5 y -1.5 EV es el truco más rápido para que un cosplay se vea profesional.',
+  },
+  {
+    key: 'bgBlur', label: 'Fondo: desenfoque', min: 0, max: 100, step: 1,
+    what: 'Desenfoca el fondo para imitar un lente de retrato con el diafragma abierto.',
+    up: 'Fondo más borroso: separa a la persona y esconde el desorden.',
+    down: 'Fondo nítido.',
+    tip: 'Es una imitación del desenfoque real. Si te pasas, los bordes del pelo se notan falsos.',
+  },
+  {
+    key: 'bgSaturation', label: 'Fondo: color', min: -100, max: 100, step: 1,
+    what: 'La fuerza del color solo en el fondo.',
+    up: 'Fondo más colorido.',
+    down: 'Fondo apagado o gris: toda la atención va al traje.',
+  },
+  {
+    key: 'subjExposure', label: 'Sujeto: luz', min: -1, max: 1, step: 0.02,
+    what: 'Aclara u oscurece SOLO a la persona.',
+    up: 'La persona recibe más luz, como un reflector de relleno.',
+    down: 'La persona se oscurece.',
+    tip: 'Subir +0.2 EV al sujeto y bajar -0.8 EV al fondo da ese look de estudio con foco.',
+  },
+  {
+    key: 'subjClarity', label: 'Sujeto: textura', min: -100, max: 100, step: 1,
+    what: 'El detalle fino solo en la persona: piel, tela, peluca.',
+    up: 'Más textura: se nota la costura y el material del traje.',
+    down: 'Suaviza la piel sin desenfocar el fondo.',
+  },
+  {
+    key: 'maskFeather', label: 'Suavizar borde', min: 0, max: 100, step: 1,
+    what: 'Qué tan difuminado queda el borde entre la persona y el fondo.',
+    up: 'Borde suave: perdona errores del recorte, sobre todo en el pelo.',
+    down: 'Borde duro y exacto.',
+    tip: 'Si ves un halo alrededor del pelo, sube esto.',
+  },
+];
+
 export function hslDefs(color: (typeof HSL_COLORS)[number]): SliderDef[] {
   return [
     {
@@ -243,7 +288,7 @@ export function hslDefs(color: (typeof HSL_COLORS)[number]): SliderDef[] {
 }
 
 export const ALL_DEFS: SliderDef[] = [
-  ...LIGHT, ...COLOR, ...EFFECTS, ...GRADING, ...HSL_COLORS.flatMap(hslDefs),
+  ...LIGHT, ...COLOR, ...EFFECTS, ...GRADING, ...MASK, ...HSL_COLORS.flatMap(hslDefs),
 ];
 export const DEF_BY_KEY = Object.fromEntries(ALL_DEFS.map((d) => [d.key, d])) as Record<AdjKey, SliderDef>;
 
@@ -254,6 +299,7 @@ export function neutral(): Adjustments {
   a.gradeMidHue = 30;
   a.gradeHighHue = 40;
   a.grainSize = 35;
+  a.maskFeather = 30;
   return a;
 }
 
