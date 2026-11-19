@@ -20,6 +20,19 @@ export function pickFromGallery(): Promise<Blob | null> {
   });
 }
 
+/** Varias fotos de golpe, para aplicarles el mismo estilo. */
+export function pickManyFromGallery(): Promise<File[]> {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.multiple = true;
+    input.onchange = () => resolve([...(input.files ?? [])]);
+    input.addEventListener('cancel', () => resolve([]));
+    input.click();
+  });
+}
+
 function stamp() {
   const d = new Date();
   const p = (n: number) => String(n).padStart(2, '0');

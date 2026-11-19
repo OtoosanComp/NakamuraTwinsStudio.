@@ -34,7 +34,7 @@ void main() {
 const MAIN = `#version 300 es
 precision highp float;
 in vec2 v_uv; out vec4 o;
-uniform sampler2D u_src, u_blur, u_mask;
+uniform sampler2D u_src, u_blur, u_mask, u_curve, u_brush;
 uniform vec2 u_srcSize, u_outSize, u_cropCenter, u_cropSize;
 uniform float u_angle, u_bypass;
 uniform float u_exposure, u_contrast, u_highlights, u_shadows, u_whites, u_blacks;
@@ -44,11 +44,45 @@ uniform vec3 u_gS, u_gM, u_gH;
 uniform float u_gBalance;
 uniform float u_clarity, u_dehaze, u_sharpen, u_fade, u_vignette, u_grain, u_grainSize, u_seed;
 uniform float u_denoise;
-uniform float u_hasMask, u_showMask, u_maskFeather, u_clip, u_alphaFromMask;
+uniform float u_hasMask, u_showMask, u_maskFeather, u_clip, u_alphaFromMask, u_bicubic, u_hasCurve, u_hasBrush;
+uniform int u_healCount;
+uniform vec4 u_healA[20];  // xy = centro, z = radio (fraccion del ancho)
+uniform vec4 u_healB[20];  // xy = de donde se copia
+uniform vec4 u_healC[20];  // rgb = correccion de color
 uniform float u_bgExposure, u_bgBlur, u_bgSaturation, u_subjExposure, u_subjClarity;
 
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 float luma(vec3 c) { return dot(c, LUMA); }
+
+/**
+ * Al acercar mucho, el filtro normal de la GPU deja la foto blanda.
+ * Catmull-Rom reconstruye con 16 muestras y conserva el filo de los bordes.
+ */
+vec3 sampleSrc(vec2 uv, float lod) {
+  if (u_bicubic < 0.5 || lod > 0.01) return textureLod(u_src, uv, lod).rgb;
+  vec2 p = uv * u_srcSize - 0.5;
+  vec2 f = fract(p);
+  vec2 base = (floor(p) + 0.5) / u_srcSize;
+  float wx[4], wy[4];
+  for (int k = 0; k < 2; k++) {
+    float x = k == 0 ? f.x : f.y;
+    float x2 = x * x, x3 = x2 * x;
+    float a = -0.5 * x3 + x2 - 0.5 * x;
+    float b = 1.5 * x3 - 2.5 * x2 + 1.0;
+    float c2 = -1.5 * x3 + 2.0 * x2 + 0.5 * x;
+    float d = 0.5 * x3 - 0.5 * x2;
+    if (k == 0) { wx[0] = a; wx[1] = b; wx[2] = c2; wx[3] = d; }
+    else { wy[0] = a; wy[1] = b; wy[2] = c2; wy[3] = d; }
+  }
+  vec3 acc = vec3(0.0);
+  for (int j = 0; j < 4; j++) {
+    for (int i = 0; i < 4; i++) {
+      vec2 o = vec2(float(i) - 1.0, float(j) - 1.0) / u_srcSize;
+      acc += textureLod(u_src, base + o, 0.0).rgb * (wx[i] * wy[j]);
+    }
+  }
+  return clamp(acc, 0.0, 1.0);
+}
 
 vec3 rgb2hsv(vec3 c) {
   vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
@@ -78,17 +112,32 @@ void main() {
 
   // --- Mascara del sujeto (1 = persona, 0 = fondo) ---
   float m = 1.0, bg = 0.0;
-  if (u_hasMask > 0.5) {
+  if (u_hasMask > 0.5 || u_hasBrush > 0.5) {
+    float base = u_hasMask > 0.5 ? texture(u_mask, uv).r : 0.0;
+    // El pincel suma (blanco) o resta (negro) sobre lo que encontró la IA.
+    if (u_hasBrush > 0.5) base = clamp(base + (texture(u_brush, uv).r * 2.0 - 1.0), 0.0, 1.0);
     float e = 0.02 + u_maskFeather * 0.45;
-    m = smoothstep(0.5 - e, 0.5 + e, texture(u_mask, uv).r);
+    m = smoothstep(0.5 - e, 0.5 + e, base);
     bg = 1.0 - m;
     if (u_showMask > 0.5) { o = vec4(vec3(m), 1.0); return; }
   }
 
   // El desenfoque del fondo se toma de los niveles reducidos de la textura, asi que es casi gratis.
   float lod = u_bgBlur * bg * 6.0;
-  vec3 c = textureLod(u_src, uv, lod).rgb;
+  vec3 c = sampleSrc(uv, lod);
   if (u_bypass > 0.5) { o = vec4(c, 1.0); return; }
+
+  // --- Objetos quitados: se tapan antes que nada, para que reciban los mismos ajustes ---
+  for (int i = 0; i < 20; i++) {
+    if (i >= u_healCount) break;
+    float rad = u_healA[i].z * u_srcSize.x;
+    float dist = length((uv - u_healA[i].xy) * u_srcSize);
+    if (dist < rad) {
+      float w = 1.0 - smoothstep(rad * 0.5, rad, dist);
+      vec3 parche = sampleSrc(uv + u_healB[i].xy, lod) + u_healC[i].rgb;
+      c = mix(c, clamp(parche, 0.0, 1.0), w);
+    }
+  }
 
   // --- Nitidez (máscara de enfoque) ---
   // Los vecinos se leen al mismo nivel, para no volver a afilar el fondo ya desenfocado.
@@ -96,6 +145,12 @@ void main() {
   if (u_sharpen > 0.0) {
     vec3 n = textureLod(u_src, uv + vec2(t.x, 0), lod).rgb + textureLod(u_src, uv - vec2(t.x, 0), lod).rgb
            + textureLod(u_src, uv + vec2(0, t.y), lod).rgb + textureLod(u_src, uv - vec2(0, t.y), lod).rgb;
+    // Al acercar, los vecinos de un solo pixel quedan muy juntos: separamos el muestreo
+    if (u_bicubic > 0.5) {
+      vec2 t2 = t * 2.0;
+      n = textureLod(u_src, uv + vec2(t2.x, 0), lod).rgb + textureLod(u_src, uv - vec2(t2.x, 0), lod).rgb
+        + textureLod(u_src, uv + vec2(0, t2.y), lod).rgb + textureLod(u_src, uv - vec2(0, t2.y), lod).rgb;
+    }
     c += (c - n * 0.25) * u_sharpen * 1.6;
     c = clamp(c, 0.0, 1.0);
   }
@@ -147,6 +202,14 @@ void main() {
   c = clamp(c, 0.0, 1.0);
   if (u_contrast > 0.0) c = mix(c, c * c * (3.0 - 2.0 * c), u_contrast);
   else c = mix(c, 0.5 + (c - 0.5) * 0.45, -u_contrast);
+
+  // --- Curva de tonos ---
+  if (u_hasCurve > 0.5) {
+    c = clamp(c, 0.0, 1.0);
+    c = vec3(texture(u_curve, vec2(c.r, 0.5)).r,
+             texture(u_curve, vec2(c.g, 0.5)).r,
+             texture(u_curve, vec2(c.b, 0.5)).r);
+  }
 
   // --- Mezcla HSL por color ---
   vec3 hsv = rgb2hsv(clamp(c, 0.0, 1.0));
@@ -266,6 +329,9 @@ export class Renderer {
   private main; private down; private blur;
   private src: WebGLTexture | null = null;
   private mask: WebGLTexture | null = null;
+  private curve: WebGLTexture | null = null;
+  private brush: WebGLTexture | null = null;
+  private heal: { a: Float32Array; b: Float32Array; c: Float32Array; n: number } = { a: new Float32Array(80), b: new Float32Array(80), c: new Float32Array(80), n: 0 };
   private srcW = 0; private srcH = 0;
   private a: Target | null = null; private b: Target | null = null;
   private seed = Math.random() * 100;
@@ -315,6 +381,8 @@ export class Renderer {
     const gl = this.gl;
     if (!img) {
       if (this.mask) gl.deleteTexture(this.mask);
+    if (this.curve) gl.deleteTexture(this.curve);
+    if (this.brush) gl.deleteTexture(this.brush);
       this.mask = null;
       return;
     }
@@ -328,7 +396,56 @@ export class Renderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   }
 
-  get hasMask() { return !!this.mask; }
+  get hasMask() { return !!this.mask || !!this.brush; }
+
+  /** Pincel manual: gris 0.5 no toca nada, blanco suma al sujeto y negro le quita. */
+  setBrush(img: TexImageSource | null) {
+    const gl = this.gl;
+    if (!img) {
+      if (this.brush) gl.deleteTexture(this.brush);
+      this.brush = null;
+      return;
+    }
+    if (!this.brush) this.brush = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.brush);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  }
+
+  /** Objetos que se tapan. Máximo 20; los de más se ignoran. */
+  setHeal(strokes: { x: number; y: number; r: number; dx: number; dy: number; fix: [number, number, number] }[]) {
+    const n = Math.min(20, strokes.length);
+    for (let i = 0; i < n; i++) {
+      const s = strokes[i];
+      this.heal.a.set([s.x, s.y, s.r, 0], i * 4);
+      this.heal.b.set([s.dx, s.dy, 0, 0], i * 4);
+      this.heal.c.set([s.fix[0], s.fix[1], s.fix[2], 0], i * 4);
+    }
+    this.heal.n = n;
+  }
+
+  /** Tabla de 256 valores de la curva de tonos. null la desactiva. */
+  setCurve(lut: Uint8Array | null) {
+    const gl = this.gl;
+    if (!lut) {
+      if (this.curve) gl.deleteTexture(this.curve);
+    if (this.brush) gl.deleteTexture(this.brush);
+      this.curve = null;
+      return;
+    }
+    if (!this.curve) this.curve = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.curve);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, 256, 1, 0, gl.RED, gl.UNSIGNED_BYTE, lut);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  }
 
   private target(w: number, h: number): Target {
     const gl = this.gl;
@@ -395,9 +512,25 @@ export class Renderer {
     gl.bindTexture(gl.TEXTURE_2D, this.mask);
     gl.uniform1i(m.u('u_mask'), 2);
     gl.uniform1f(m.u('u_hasMask'), this.mask ? 1 : 0);
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, this.curve);
+    gl.uniform1i(m.u('u_curve'), 3);
+    gl.uniform1f(m.u('u_hasCurve'), this.curve ? 1 : 0);
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, this.brush);
+    gl.uniform1i(m.u('u_brush'), 4);
+    gl.uniform1f(m.u('u_hasBrush'), this.brush ? 1 : 0);
+    gl.uniform1i(m.u('u_healCount'), this.heal.n);
+    if (this.heal.n > 0) {
+      gl.uniform4fv(m.u('u_healA'), this.heal.a);
+      gl.uniform4fv(m.u('u_healB'), this.heal.b);
+      gl.uniform4fv(m.u('u_healC'), this.heal.c);
+    }
     gl.uniform1f(m.u('u_showMask'), showMask ? 1 : 0);
     gl.uniform1f(m.u('u_clip'), clip ? 1 : 0);
     gl.uniform1f(m.u('u_alphaFromMask'), alphaFromMask ? 1 : 0);
+    // Agrandar = menos pixeles de origen que de destino. Ahi vale la pena el bicubico.
+    gl.uniform1f(m.u('u_bicubic'), crop.w < outW * 0.98 ? 1 : 0);
     gl.uniform2f(m.u('u_srcSize'), this.srcW, this.srcH);
     gl.uniform2f(m.u('u_outSize'), outW, outH);
     gl.uniform2f(m.u('u_cropCenter'), crop.cx, crop.cy);
@@ -447,7 +580,7 @@ export class Renderer {
    */
   renderSplit(bgAdj: Adjustments, subjAdj: Adjustments | null, crop: CropRect, outW: number, outH: number, opts: RenderOpts = {}) {
     this.render(bgAdj, crop, outW, outH, opts);
-    if (!subjAdj || !this.mask || opts.bypass || opts.showMask) return;
+    if (!subjAdj || !this.hasMask || opts.bypass || opts.showMask) return;
     const gl = this.gl;
     gl.enable(gl.BLEND);
     // El alfa del destino se queda en 1 para que el lienzo no quede translúcido.
@@ -461,8 +594,10 @@ export class Renderer {
     const gl = this.gl;
     if (this.src) gl.deleteTexture(this.src);
     if (this.mask) gl.deleteTexture(this.mask);
+    if (this.curve) gl.deleteTexture(this.curve);
+    if (this.brush) gl.deleteTexture(this.brush);
     this.freeTarget(this.a); this.freeTarget(this.b);
-    this.src = null; this.mask = null; this.a = null; this.b = null;
+    this.src = null; this.mask = null; this.curve = null; this.brush = null; this.a = null; this.b = null;
     if (loseContext) gl.getExtension('WEBGL_lose_context')?.loseContext();
   }
 }

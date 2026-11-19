@@ -114,6 +114,16 @@ async function decode(blob: Blob, maxSide: number, meta: { w?: number; h?: numbe
   return { bmp, fullW: fw, fullH: fh };
 }
 
+/**
+ * Decodifica la foto a mayor resolución, para ver el detalle real al acercar.
+ * La vista normal usa una copia de 2048 px: al acercar 4x eso se ve blando.
+ */
+export async function decodeDetail(blob: Blob, maxSide: number) {
+  const meta = await readJpegMeta(blob).catch(() => ({ exif: {} as ExifInfo }));
+  const { bmp } = await decode(blob, maxSide, meta);
+  return bmp;
+}
+
 export async function loadPhoto(blob: Blob): Promise<LoadedPhoto> {
   const meta = await readJpegMeta(blob).catch(() => ({ exif: {} as ExifInfo }));
   let res;
@@ -135,8 +145,29 @@ export function outputSize(crop: CropState, srcW: number, srcH: number, maxSide:
   return { rect: r, w: Math.max(1, Math.round(r.w * k)), h: Math.max(1, Math.round(r.h * k)) };
 }
 
+export interface ExportExtras {
+  mask?: { canvas: TexImageSource } | null;
+  /** Estilo propio para la persona. */
+  subjAdj?: Adjustments | null;
+  /** Lienzo del pincel manual. */
+  brush?: TexImageSource | null;
+  /** Tabla de la curva de tonos. */
+  curve?: Uint8Array | null;
+  /** Objetos tapados. */
+  heal?: { x: number; y: number; r: number; dx: number; dy: number; fix: [number, number, number] }[];
+  /** Lado máximo del archivo final. */
+  limit?: number;
+  quality?: number;
+}
+
 /** Revela la foto en alta resolución y la devuelve como JPEG. */
-export async function exportJpeg(photo: LoadedPhoto, adj: Adjustments, crop: CropState, mask?: { canvas: TexImageSource } | null, subjAdj?: Adjustments | null, limit = EXPORT_MAX, quality = 0.95): Promise<Blob> {
+export async function exportJpeg(
+  photo: LoadedPhoto,
+  adj: Adjustments,
+  crop: CropState,
+  extras: ExportExtras = {},
+): Promise<Blob> {
+  const { mask, subjAdj, brush, curve, heal, limit = EXPORT_MAX, quality = 0.95 } = extras;
   const canvas = document.createElement('canvas');
   const r = new Renderer(canvas);
   try {
@@ -145,6 +176,9 @@ export async function exportJpeg(photo: LoadedPhoto, adj: Adjustments, crop: Cro
     const { bmp } = await decode(photo.blob, maxSide, meta);
     r.setSource(bmp, bmp.width, bmp.height);
     r.setMask(mask?.canvas ?? null);
+    r.setBrush(brush ?? null);
+    r.setCurve(curve ?? null);
+    r.setHeal(heal ?? []);
     const { rect, w, h } = outputSize(crop, bmp.width, bmp.height, maxSide);
     r.renderSplit(adj, subjAdj ?? null, rect, w, h);
     bmp.close();

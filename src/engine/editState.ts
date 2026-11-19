@@ -2,6 +2,8 @@ import {
   ALL_DEFS, DEF_BY_KEY, clampAdj, defaultCrop, neutral,
   type AdjKey, type Adjustments, type CropState, type PartialAdj,
 } from './adjustments';
+import { CURVE_IDENTITY } from './curve';
+import type { HealStroke } from './heal';
 import type { Preset } from './presets';
 
 /**
@@ -21,12 +23,28 @@ export interface EditState {
   /** Estilo solo para la persona. null = lleva el mismo estilo que el fondo. */
   subjectPresetId: string | null;
   subjectAmount: number;
+  /** Curva de tonos: salida en x = 0, 0.25, 0.5, 0.75 y 1. */
+  curve: number[];
+  /** Objetos tapados. */
+  heal: HealStroke[];
+  /** Trazos del pincel que corrigen la máscara a mano. */
+  brush: BrushStroke[];
+}
+
+export interface BrushStroke {
+  x: number;
+  y: number;
+  /** Radio, en fracción del ancho de la foto. */
+  r: number;
+  /** true = suma al sujeto, false = se lo quita. */
+  add: boolean;
 }
 
 export function initialEdit(): EditState {
   return {
     autoOn: true, auto: {}, presetId: null, amount: 1, user: {},
     crop: defaultCrop(), maskOn: false, subjectPresetId: null, subjectAmount: 1,
+    curve: [...CURVE_IDENTITY], heal: [], brush: [],
   };
 }
 

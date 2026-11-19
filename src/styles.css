@@ -311,3 +311,33 @@ ul.basics li { margin: 7px 0; line-height: 1.4; }
 
 .out-size { font-size: 0.82em; color: var(--muted); margin: -2px 0 2px; }
 .out-size.warn { color: #ffd479; }
+
+/* Curva de tonos */
+.curve { display: grid; gap: 4px; justify-items: center; margin: 4px 0 8px; }
+.curve svg { width: 100%; max-width: 300px; touch-action: none; display: block; }
+.curve-axis { display: flex; justify-content: space-between; width: 100%; max-width: 300px; font-size: 0.68em; color: var(--muted); }
+.panel .section-head { margin: 10px 0 0; }
+
+/* ---------- Pantalla completa ---------- */
+.editor.full .stage { position: absolute; inset: 0; padding: 0; z-index: 1; }
+.editor.full .exif-strip { display: none; }
+.editor.full .topbar {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 6;
+  background: linear-gradient(rgba(0,0,0,.6), transparent);
+  opacity: 0.78;
+}
+.editor.full .tabs {
+  position: absolute; bottom: 0; left: 0; right: 0; z-index: 6;
+  background: rgba(10, 8, 16, 0.6); backdrop-filter: blur(10px);
+  border-top: 1px solid #ffffff14; opacity: 0.88;
+}
+.editor.full .controls {
+  position: absolute; left: 0; right: 0; z-index: 5;
+  bottom: calc(var(--safe-bottom) + 54px);
+  background: rgba(12, 10, 18, 0.72); backdrop-filter: blur(14px);
+  border-radius: 18px 18px 0 0; border-top: 1px solid #ffffff14;
+  max-height: 44vh;
+}
+.editor.full .topbar:active, .editor.full .tabs:active { opacity: 1; }
+.editor.full .learn { bottom: calc(44vh + 70px); }
+.editor.full .busy { z-index: 30; }

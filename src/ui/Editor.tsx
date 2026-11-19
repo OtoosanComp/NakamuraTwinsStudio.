@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft, Undo2, Redo2, Eye, Save, Download, Share2, MoreVertical, Sparkles, Sun, Palette,
-  Droplets, SlidersHorizontal, Crop, Film, Wand2, RotateCcw, Copy, ClipboardPaste, Grid3x3, Loader2, Trash2, Users, Pipette, TriangleAlert,
+  Droplets, SlidersHorizontal, Crop, Film, Wand2, RotateCcw, Copy, ClipboardPaste, Grid3x3, Loader2, Trash2, Users, Pipette, TriangleAlert, Eraser, Plus, Minus, Maximize2, Minimize2, Images,
 } from 'lucide-react';
 import {
   ASPECTS, COLOR, EFFECTS, GRADING, HSL_COLORS, LIGHT, MASK, ALL_DEFS, cropOnSubject, defaultCrop, hslDefs, neutral,
@@ -13,14 +13,18 @@ import {
 } from '../engine/editState';
 import { PRESETS, loadCustomPresets, saveCustomPresets, type Preset } from '../engine/presets';
 import { personMask, type PersonMask } from '../engine/segment';
+import { buildCurveLut, CURVE_IDENTITY, isIdentityCurve } from '../engine/curve';
+import { findHealSource, regroupHeal, HEAL_MAX } from '../engine/heal';
+import type { BrushStroke } from '../engine/editState';
 import { Renderer } from '../engine/renderer';
 import {
-  PREVIEW_MAX, exportJpeg, formatShutter, loadPhoto, outputSize, smallJpegBase64, type LoadedPhoto,
+  PREVIEW_MAX, decodeDetail, exportJpeg, formatShutter, loadPhoto, outputSize, smallJpegBase64, type LoadedPhoto,
 } from '../lib/image';
-import { saveToGallery, shareImage } from '../lib/platform';
+import { pickManyFromGallery, saveToGallery, shareImage } from '../lib/platform';
 import { hasAiKey, projects, uid, type Settings } from '../lib/storage';
 import { reviewPhoto, type TwinsReview } from '../ai/vision';
 import { Slider } from './Slider';
+import { CurveEditor } from './CurveEditor';
 import { EXIF_LESSONS, LearnBubble, learnFromSlider, type LearnInfo } from './Learn';
 import { TwinAvatar, TwinBubble } from './Twins';
 import { useFit } from './useFit';
@@ -32,7 +36,7 @@ export interface EditorSource {
   presetId?: string | null;
 }
 
-type Tab = 'estilos' | 'luz' | 'color' | 'mezcla' | 'gradacion' | 'efectos' | 'sujeto' | 'recorte' | 'gemelas';
+type Tab = 'estilos' | 'luz' | 'color' | 'mezcla' | 'gradacion' | 'efectos' | 'sujeto' | 'quitar' | 'recorte' | 'gemelas';
 
 const TABS: { id: Tab; label: string; icon: typeof Sun }[] = [
   { id: 'estilos', label: 'Estilos', icon: Film },
@@ -43,6 +47,7 @@ const TABS: { id: Tab; label: string; icon: typeof Sun }[] = [
   { id: 'gradacion', label: 'Gradación', icon: SlidersHorizontal },
   { id: 'efectos', label: 'Efectos', icon: Wand2 },
   { id: 'sujeto', label: 'Sujeto', icon: Users },
+  { id: 'quitar', label: 'Quitar', icon: Eraser },
   { id: 'recorte', label: 'Recorte', icon: Crop },
 ];
 
@@ -84,8 +89,27 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
   const [maskBusy, setMaskBusy] = useState(false);
   const [maskError, setMaskError] = useState<string | null>(null);
   const [showMask, setShowMask] = useState(false);
+  /** Copia a mayor resolución que se carga sola al acercar, para ver el detalle real. */
+  const [detail, setDetail] = useState<{ bmp: ImageBitmap; w: number; h: number } | null>(null);
+  const detailBusy = useRef(false);
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const gesture = useRef<{ dist: number; mx: number; my: number; crop: CropState; baseX: number; baseY: number } | null>(null);
+  const lastTap = useRef({ t: 0, x: 0, y: 0 });
   const [picking, setPicking] = useState(false);
+  /** 'off' = los dedos encuadran; si no, el dedo pinta. */
+  const [paint, setPaint] = useState<'off' | 'add' | 'sub' | 'heal'>('off');
+  const [brushSize, setBrushSize] = useState(0.07);
+  const painting = useRef(false);
+  const lastPaint = useRef<{ x: number; y: number } | null>(null);
+  /** Dónde empezó el trazo actual dentro de edit.heal, para recalcular el origen al soltar. */
+  const healGroup = useRef(0);
+  const sampleDataRef = useRef<ImageData | null>(null);
   const [clip, setClip] = useState(false);
+  /** Pantalla completa: la foto ocupa todo y las barras quedan encima, translúcidas. */
+  const [full, setFull] = useState(false);
+  const [panelHidden, setPanelHidden] = useState(false);
+  const [batch, setBatch] = useState<{ done: number; total: number; fallos: number } | null>(null);
+  const cancelBatch = useRef(false);
   const sampleRef = useRef<CanvasRenderingContext2D | null>(null);
   const dragStart = useRef<EditState | null>(null);
   const learnTimer = useRef<number>();
@@ -96,11 +120,13 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
   const subjectPreset = allPresets.find((p) => p.id === edit.subjectPresetId);
   const subjAdj = useMemo(() => composeSubject(edit, subjectPreset), [edit, subjectPreset]);
   const stageRef = useRef<HTMLDivElement>(null);
+  const srcW = detail?.w ?? photo?.previewW ?? 1;
+  const srcH = detail?.h ?? photo?.previewH ?? 1;
   const outAspect = useMemo(() => {
     if (!photo) return 0;
-    const r = resolveCrop(edit.crop, photo.previewW, photo.previewH);
+    const r = resolveCrop(edit.crop, srcW, srcH);
     return r.w / r.h;
-  }, [photo, edit.crop]);
+  }, [photo, edit.crop, srcW, srcH]);
   const fit = useFit(stageRef, outAspect, 8);
   const outPx = useMemo(() => {
     if (!photo) return null;
@@ -110,6 +136,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
   // ---------- Cargar la foto ----------
   useEffect(() => {
     let alive = true;
+    setDetail(null);
     loadPhoto(source.blob)
       .then((p) => {
         if (!alive) return;
@@ -126,7 +153,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     if (!photo || !canvasRef.current) return;
     try {
       const r = new Renderer(canvasRef.current);
-      r.setSource(photo.preview, photo.previewW, photo.previewH);
+      r.setSource(detail?.bmp ?? photo.preview, srcW, srcH);
       rendererRef.current = r;
     } catch (e) {
       setLoadError(String((e as Error).message));
@@ -134,7 +161,32 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     return () => { rendererRef.current?.dispose(); rendererRef.current = null; };
   }, [photo]);
 
-  useEffect(() => { sampleRef.current = null; }, [photo]);
+  // Al acercar cargamos la foto a resolución real; al alejar la soltamos para no gastar memoria.
+  useEffect(() => {
+    if (!photo) return;
+    const zoom = edit.crop.zoom;
+    if (zoom > 1.5 && !detail && !detailBusy.current && pointers.current.size === 0) {
+      detailBusy.current = true;
+      const max = Math.min(rendererRef.current?.maxTexture ?? 4096, 4096);
+      decodeDetail(photo.blob, max)
+        .then((bmp) => setDetail({ bmp, w: bmp.width, h: bmp.height }))
+        .catch(() => {})
+        .finally(() => { detailBusy.current = false; });
+    } else if (zoom <= 1.2 && detail) {
+      detail.bmp.close();
+      setDetail(null);
+    }
+  }, [edit.crop.zoom, photo, detail]);
+
+  // Cambiar de fuente obliga a volver a subir la textura.
+  useEffect(() => {
+    const r = rendererRef.current;
+    if (!r || !photo) return;
+    r.setSource(detail?.bmp ?? photo.preview, srcW, srcH);
+  }, [detail, photo, srcW, srcH]);
+
+  useEffect(() => { sampleRef.current = null; sampleDataRef.current = null; }, [photo]);
+
 
   // ---------- Gotero de balance de blancos ----------
   /** Copia de la foto original para leer colores. Se crea la primera vez que usas el gotero. */
@@ -158,18 +210,27 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     const u = (clientX - r.left) / r.width;
     const v = (clientY - r.top) / r.height;
     if (u < 0 || u > 1 || v < 0 || v > 1) return null;
-    const rect = resolveCrop(edit.crop, photo.previewW, photo.previewH);
+    const rect = resolveCrop(edit.crop, srcW, srcH);
     const qx = (u - 0.5) * rect.w, qy = (v - 0.5) * rect.h;
     const cs = Math.cos(rect.angle), sn = Math.sin(rect.angle);
     return { x: rect.cx + qx * cs - qy * sn, y: rect.cy + qx * sn + qy * cs };
   };
+
+  /** Píxeles de la foto, leídos una sola vez: los usa el buscador de parches. */
+  const sampleData = useCallback(() => {
+    if (sampleDataRef.current) return sampleDataRef.current;
+    const ctx = sampleCtx();
+    if (!ctx) return null;
+    sampleDataRef.current = ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height);
+    return sampleDataRef.current;
+  }, [sampleCtx]);
 
   /** Toca un gris o blanco: calculamos temperatura y matiz que lo dejan neutro. */
   const pickWhiteBalance = (clientX: number, clientY: number) => {
     const ctx = sampleCtx();
     const pt = imagePointAt(clientX, clientY);
     if (!ctx || !pt || !photo) return;
-    const scale = ctx.canvas.width / photo.previewW;
+    const scale = ctx.canvas.width / srcW;
     const px = pt.x * scale;
     const py = pt.y * scale;
 
@@ -200,6 +261,39 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
       tip: 'Funciona mejor sobre algo que sabes que es blanco o gris: una pared, una tela blanca o el blanco de los ojos.',
     });
   };
+
+  // ---------- Pincel y objetos quitados ----------
+  const brushCanvas = useMemo(() => {
+    if (!edit.brush.length || !photo) return null;
+    const W = 512;
+    const H = Math.max(1, Math.round((W * photo.previewH) / photo.previewW));
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const ctx = c.getContext('2d')!;
+    ctx.fillStyle = '#808080'; // gris = no toca nada
+    ctx.fillRect(0, 0, W, H);
+    for (const st of edit.brush) {
+      const r = Math.max(1, st.r * W);
+      const col = st.add ? '255,255,255' : '0,0,0';
+      const g = ctx.createRadialGradient(st.x * W, st.y * H, 0, st.x * W, st.y * H, r);
+      g.addColorStop(0, `rgba(${col},1)`);
+      g.addColorStop(0.65, `rgba(${col},1)`);
+      g.addColorStop(1, `rgba(${col},0)`);
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(st.x * W, st.y * H, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    return c;
+  }, [edit.brush, photo]);
+
+  useEffect(() => { rendererRef.current?.setBrush(brushCanvas); }, [brushCanvas, photo]);
+  useEffect(() => { rendererRef.current?.setHeal(edit.heal); }, [edit.heal, photo]);
+
+  // ---------- Curva de tonos ----------
+  useEffect(() => {
+    rendererRef.current?.setCurve(isIdentityCurve(edit.curve) ? null : buildCurveLut(edit.curve));
+  }, [edit.curve, photo]);
 
   // ---------- Máscara del sujeto ----------
   useEffect(() => {
@@ -232,11 +326,11 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     const r = rendererRef.current;
     if (!r || !photo) return;
     const id = requestAnimationFrame(() => {
-      const { rect, w, h } = outputSize(edit.crop, photo.previewW, photo.previewH, PREVIEW_MAX);
+      const { rect, w, h } = outputSize(edit.crop, srcW, srcH, PREVIEW_MAX);
       r.renderSplit(bypass ? neutral() : adj, subjAdj, rect, w, h, { bypass, showMask, clip });
     });
     return () => cancelAnimationFrame(id);
-  }, [adj, subjAdj, edit.crop, bypass, photo, mask, showMask, clip]);
+  }, [adj, subjAdj, edit.crop, edit.curve, edit.heal, brushCanvas, bypass, photo, mask, showMask, clip, detail, srcW, srcH]);
 
   // ---------- Histograma de la foto editada ----------
   useEffect(() => {
@@ -265,6 +359,15 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     setEdit(next);
   }, []);
   const apply = (fn: (s: EditState) => EditState) => commit(fn(edit), edit);
+  /**
+   * Para gestos y pincel: el estado ya se fue actualizando con setEdit, así que
+   * aquí solo se apunta el punto de partida. Volver a escribirlo borraría lo último.
+   */
+  const pushHistory = useCallback((prev: EditState | null) => {
+    if (!prev) return;
+    setPast((p) => [...p.slice(-60), prev]);
+    setFuture([]);
+  }, []);
   const undo = () => {
     if (!past.length) return;
     setFuture((f) => [edit, ...f]);
@@ -296,7 +399,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
       onStart={() => { dragStart.current = edit; }}
       onChange={(v) => setEdit((st) => setFinalValue(st, preset, def.key, v))}
       onEnd={() => {
-        if (dragStart.current && dragStart.current !== edit) commit(edit, dragStart.current);
+        pushHistory(dragStart.current);
         dragStart.current = null;
       }}
       onReset={() => apply((s) => resetKey(s, def.key))}
@@ -310,9 +413,6 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
   };
 
   // ---------- Encuadre con los dedos: pellizcar, arrastrar y doble toque ----------
-  const pointers = useRef(new Map<number, { x: number; y: number }>());
-  const gesture = useRef<{ dist: number; mx: number; my: number; crop: CropState; baseX: number; baseY: number } | null>(null);
-  const lastTap = useRef({ t: 0, x: 0, y: 0 });
 
   const fingers = () => [...pointers.current.values()];
   const midpoint = (pts: { x: number; y: number }[]) => ({
@@ -325,7 +425,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     const pts = fingers();
     if (!pts.length || !photo) { gesture.current = null; return; }
     const m = midpoint(pts);
-    const base = resolveCrop(edit.crop, photo.previewW, photo.previewH);
+    const base = resolveCrop(edit.crop, srcW, srcH);
     gesture.current = {
       dist: pts.length >= 2 ? Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) : 0,
       mx: m.x, my: m.y, crop: edit.crop, baseX: base.cx, baseY: base.cy,
@@ -343,14 +443,54 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     if (!pt) return;
     apply((st) => ({
       ...st,
-      crop: { ...st.crop, zoom: 2.5, cx: pt.x / photo.previewW, cy: pt.y / photo.previewH },
+      crop: { ...st.crop, zoom: 2.5, cx: pt.x / srcW, cy: pt.y / srcH },
     }));
+  };
+
+  /** Añade un toque de pincel o un parche en el punto que tocaste. */
+  const paintAt = (clientX: number, clientY: number) => {
+    const pt = imagePointAt(clientX, clientY);
+    if (!pt || !photo) return;
+    const x = pt.x / srcW, y = pt.y / srcH;
+    // Separamos los toques para no acumular miles
+    const last = lastPaint.current;
+    const gap = paint === 'heal' ? brushSize * 1.2 : brushSize * 0.35;
+    if (last && Math.hypot(x - last.x, (y - last.y) * (srcH / srcW)) < gap) return;
+    lastPaint.current = { x, y };
+
+    if (paint === 'heal') {
+      if (edit.heal.length >= HEAL_MAX) { toast(`Máximo ${HEAL_MAX} objetos por foto.`); return; }
+      const data = sampleData();
+      if (!data) return;
+      const stroke = findHealSource(data, x, y, brushSize);
+      setEdit((st) => ({ ...st, heal: [...st.heal, stroke] }));
+    } else {
+      const stroke: BrushStroke = { x, y, r: brushSize, add: paint === 'add' };
+      setEdit((st) => ({ ...st, brush: [...st.brush, stroke], maskOn: true }));
+    }
   };
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (picking) { pickWhiteBalance(e.clientX, e.clientY); return; }
     if (!photo) return;
     (e.target as Element).setPointerCapture(e.pointerId);
+
+    if (paint !== 'off') {
+      pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.current.size === 1) {
+        painting.current = true;
+        lastPaint.current = null;
+        healGroup.current = edit.heal.length;
+        dragStart.current = edit;
+        paintAt(e.clientX, e.clientY);
+      } else {
+        // Un segundo dedo deja de pintar y pasa a encuadrar, para poder acercarse
+        painting.current = false;
+        beginGesture();
+      }
+      return;
+    }
+
     if (pointers.current.size === 0) {
       const now = Date.now();
       const near = Math.hypot(e.clientX - lastTap.current.x, e.clientY - lastTap.current.y) < 40;
@@ -369,6 +509,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
   const onPointerMove = (e: React.PointerEvent) => {
     if (!pointers.current.has(e.pointerId)) return;
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (painting.current) { paintAt(e.clientX, e.clientY); return; }
     const g = gesture.current;
     const cv = canvasRef.current;
     if (!g || !photo || !cv) return;
@@ -383,13 +524,13 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     }
 
     // Mover: lo que se desplazó el centro de los dedos, en píxeles de la foto.
-    const cur = resolveCrop({ ...g.crop, zoom }, photo.previewW, photo.previewH);
+    const cur = resolveCrop({ ...g.crop, zoom }, srcW, srcH);
     const scale = cur.w / cv.getBoundingClientRect().width;
     const dx = (m.x - g.mx) * scale, dy = (m.y - g.my) * scale;
     const cs = Math.cos(cur.angle), sn = Math.sin(cur.angle);
     const rx = dx * cs - dy * sn, ry = dx * sn + dy * cs;
-    const cx = (g.baseX - rx) / photo.previewW;
-    const cy = (g.baseY - ry) / photo.previewH;
+    const cx = (g.baseX - rx) / srcW;
+    const cy = (g.baseY - ry) / srcH;
     setEdit((st) => ({
       ...st,
       crop: { ...st.crop, zoom, cx: Math.min(1, Math.max(0, cx)), cy: Math.min(1, Math.max(0, cy)) },
@@ -398,8 +539,22 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
 
   const onPointerUp = (e: React.PointerEvent) => {
     pointers.current.delete(e.pointerId);
-    if (pointers.current.size > 0) { beginGesture(); return; }
-    if (dragStart.current && dragStart.current !== edit) commit(edit, dragStart.current);
+    if (pointers.current.size > 0) { if (!painting.current) beginGesture(); return; }
+    // Al soltar, todo el trazo se tapa con un solo origen bien elegido
+    if (painting.current && paint === 'heal') {
+      const data = sampleData();
+      if (data) {
+        setEdit((st) => {
+          const group = st.heal.slice(healGroup.current);
+          if (!group.length) return st;
+          const fixed = regroupHeal(data, group, srcW / srcH);
+          return { ...st, heal: [...st.heal.slice(0, healGroup.current), ...fixed] };
+        });
+      }
+    }
+    painting.current = false;
+    lastPaint.current = null;
+    pushHistory(dragStart.current);
     dragStart.current = null;
     gesture.current = null;
   };
@@ -428,7 +583,14 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     setMenu(false);
     setBusy('Revelando en alta calidad…');
     try {
-      const jpeg = await exportJpeg(photo, adj, edit.crop, edit.maskOn ? mask : null, subjAdj, limit);
+      const jpeg = await exportJpeg(photo, adj, edit.crop, {
+        mask: edit.maskOn ? mask : null,
+        subjAdj,
+        brush: edit.maskOn ? brushCanvas : null,
+        curve: isIdentityCurve(edit.curve) ? null : buildCurveLut(edit.curve),
+        heal: edit.heal,
+        limit,
+      });
       if (mode === 'gallery') {
         const where = await saveToGallery(jpeg);
         toast(`¡Listo! Foto guardada en ${where}`);
@@ -440,6 +602,47 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     } finally {
       setBusy(null);
     }
+  };
+
+  /**
+   * Aplica el estilo y los ajustes de esta foto a varias más y las guarda en la galería.
+   * No copia el recorte fino ni los parches: eso es de cada foto.
+   */
+  const runBatch = async () => {
+    setMenu(false);
+    const files = await pickManyFromGallery();
+    if (!files.length) return;
+    cancelBatch.current = false;
+    setBatch({ done: 0, total: files.length, fallos: 0 });
+    let fallos = 0;
+    for (let i = 0; i < files.length; i++) {
+      if (cancelBatch.current) break;
+      try {
+        const ph = await loadPhoto(files[i]);
+        const a = analyzeImage(ph.preview, ph.previewW, ph.previewH, ph.exif.iso);
+        const st: EditState = {
+          ...edit,
+          auto: a.auto,
+          // El encuadre fino, los parches y el pincel son de la foto original
+          crop: { ...defaultCrop(), aspect: edit.crop.aspect, angle: edit.crop.angle },
+          heal: [],
+          brush: [],
+        };
+        let m: PersonMask | null = null;
+        if (edit.maskOn) m = await personMask(ph.preview).catch(() => null);
+        const jpeg = await exportJpeg(ph, composeAdjustments(st, preset), st.crop, {
+          mask: m,
+          subjAdj: composeSubject(st, subjectPreset),
+          curve: isIdentityCurve(st.curve) ? null : buildCurveLut(st.curve),
+        });
+        await saveToGallery(jpeg);
+      } catch {
+        fallos++;
+      }
+      setBatch({ done: i + 1, total: files.length, fallos });
+    }
+    setBatch(null);
+    toast(fallos ? `Listo, con ${fallos} foto(s) que no se pudieron abrir.` : `Listo: ${files.length} foto(s) guardadas en la galería.`);
   };
 
   const copyAdjustments = () => {
@@ -565,7 +768,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
                     value={Math.round(edit.amount * 100)}
                     onStart={() => { dragStart.current = edit; }}
                     onChange={(v) => setEdit((s) => ({ ...s, amount: v / 100 }))}
-                    onEnd={() => { if (dragStart.current) commit(edit, dragStart.current); dragStart.current = null; }}
+                    onEnd={() => { pushHistory(dragStart.current); dragStart.current = null; }}
                     onReset={() => apply((s) => ({ ...s, amount: 1 }))}
                     format={(v) => `${v}%`}
                     onLearn={(d, v) => showLearn({ title: d.label, value: `${v}%`, body: d.what })}
@@ -598,6 +801,32 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
             </button>
             {hist && <Histogram data={hist} />}
             {LIGHT.map((d) => sliderFor(d))}
+            <div className="section-head">
+              <p className="section-title">Curva de tonos</p>
+              {!isIdentityCurve(edit.curve) && (
+                <button className="link small" onClick={() => apply((st) => ({ ...st, curve: [...CURVE_IDENTITY] }))}>
+                  Enderezar
+                </button>
+              )}
+            </div>
+            <p className="muted small">
+              Arrastra los puntos: izquierda son las sombras y derecha las luces. Bajar las sombras y subir las luces
+              (una "S") da contraste de cine sin tocar el color.
+            </p>
+            <CurveEditor
+              points={edit.curve}
+              onChange={(pts) => {
+                if (!dragStart.current) dragStart.current = edit;
+                setEdit((st) => ({ ...st, curve: pts }));
+              }}
+              onCommit={() => { pushHistory(dragStart.current); dragStart.current = null; }}
+              onLearn={(label, v) => showLearn({
+                title: `Curva · ${label}`,
+                value: `${Math.round(v * 100)}%`,
+                body: 'Cambias qué tan claro sale ese rango de tonos, sin tocar los demás.',
+                tip: 'Si la curva queda muy empinada en una zona, ahí ganas contraste; donde queda plana, lo pierdes.',
+              })}
+            />
           </div>
         );
       case 'color':
@@ -638,7 +867,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
             <p className="muted small">
               El teléfono busca a las personas y las separa del fondo. Todo pasa dentro del teléfono: no se manda nada a internet.
             </p>
-            {!mask && (
+            {!mask && !edit.brush.length && (
               <button className="btn primary wide" onClick={() => runMask()} disabled={maskBusy}>
                 {maskBusy
                   ? <><Loader2 className="spin" size={18} /> Buscando a las personas…</>
@@ -646,7 +875,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
               </button>
             )}
             {maskError && <p className="error">{maskError}</p>}
-            {mask && (
+            {(mask || edit.brush.length > 0) && (
               <>
                 <div className="auto-row">
                   <label className="switch">
@@ -699,22 +928,80 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
                         format={(v) => `${v}%`}
                         onStart={() => { dragStart.current = edit; }}
                         onChange={(v) => setEdit((st) => ({ ...st, subjectAmount: v / 100 }))}
-                        onEnd={() => { if (dragStart.current) commit(edit, dragStart.current); dragStart.current = null; }}
+                        onEnd={() => { pushHistory(dragStart.current); dragStart.current = null; }}
                         onReset={() => apply((st) => ({ ...st, subjectAmount: 1 }))}
                         onLearn={(d, v) => showLearn({ title: d.label, value: `${v}%`, body: d.what })}
                       />
                     )}
+                    <p className="section-title">Corregir el recorte a mano</p>
+                    <p className="muted small">
+                      Si la IA dejó fuera una peluca, un prop o unas alas, píntalo. Con dos dedos te acercas sin salir.
+                    </p>
+                    <div className="row">
+                      <button className={`btn small ${paint === 'add' ? 'primary' : ''}`}
+                        onClick={() => { setPaint(paint === 'add' ? 'off' : 'add'); setPicking(false); }}>
+                        <Plus size={14} /> Añadir
+                      </button>
+                      <button className={`btn small ${paint === 'sub' ? 'primary' : ''}`}
+                        onClick={() => { setPaint(paint === 'sub' ? 'off' : 'sub'); setPicking(false); }}>
+                        <Minus size={14} /> Borrar
+                      </button>
+                      <button className="btn ghost small" disabled={!edit.brush.length}
+                        onClick={() => apply((st) => ({ ...st, brush: [] }))}>
+                        <RotateCcw size={14} /> Limpiar
+                      </button>
+                    </div>
+              <Slider
+                def={{ key: 'contrast', label: 'Tamaño del pincel', min: 2, max: 25, step: 0.5, what: 'Qué tan grande es el círculo que pintas con el dedo.', up: 'Más grande: avanzas rápido.', down: 'Más chico: para detalles como el pelo.' }}
+                value={brushSize * 100}
+                format={(v) => `${v.toFixed(1)}%`}
+                onChange={(v) => setBrushSize(v / 100)}
+              />
                     <p className="section-title">Ajustes finos</p>
                     {MASK.map((d) => sliderFor(d))}
                   </>
                 ) : (
                   <p className="muted small">Enciende el interruptor para ajustar al sujeto y al fondo por separado.</p>
                 )}
-                <button className="btn ghost small" onClick={() => { setMask(null); apply((st) => ({ ...st, maskOn: false })); }}>
-                  <RotateCcw size={14} /> Calcular de nuevo
+                <button className="btn ghost small" onClick={() => { setMask(null); setDetail(null); }}>
+                  <RotateCcw size={14} /> Buscar personas otra vez
                 </button>
               </>
             )}
+          </div>
+        );
+      case 'quitar':
+        return (
+          <div className="panel">
+            <p className="muted small">
+              <b>Pinta encima de todo el objeto</b> (botes, sillas, letreros, cables) de una sola pasada,
+              sin levantar el dedo. Al soltar, la app busca alrededor un pedazo parecido y lo copia encima.
+              Funciona muy bien sobre fondo parejo; encima de una cara o de un patrón marcado se nota.
+            </p>
+            <button
+              className={`btn wide ${paint === 'heal' ? 'primary' : ''}`}
+              onClick={() => { setPaint(paint === 'heal' ? 'off' : 'heal'); setPicking(false); }}
+            >
+              <Eraser size={16} /> {paint === 'heal' ? 'Tocando para quitar… (toca aquí para terminar)' : 'Quitar objetos'}
+            </button>
+            {paint === 'heal' && <p className="muted small">Con dos dedos puedes acercarte sin salir del modo.</p>}
+              <Slider
+                def={{ key: 'contrast', label: 'Tamaño del pincel', min: 2, max: 25, step: 0.5, what: 'Qué tan grande es el círculo que pintas con el dedo.', up: 'Más grande: avanzas rápido.', down: 'Más chico: para detalles como el pelo.' }}
+                value={brushSize * 100}
+                format={(v) => `${v.toFixed(1)}%`}
+                onChange={(v) => setBrushSize(v / 100)}
+              />
+            <p className="out-size">{edit.heal.length} de {HEAL_MAX} objetos quitados</p>
+            <div className="row">
+              <button className="btn ghost small" disabled={!edit.heal.length}
+                onClick={() => apply((st) => ({ ...st, heal: st.heal.slice(0, -1) }))}>
+                <Undo2 size={14} /> Quitar el último
+              </button>
+              <button className="btn ghost small" disabled={!edit.heal.length}
+                onClick={() => apply((st) => ({ ...st, heal: [] }))}>
+                <RotateCcw size={14} /> Empezar de nuevo
+              </button>
+            </div>
           </div>
         );
       case 'recorte':
@@ -729,7 +1016,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
               value={edit.crop.zoom}
               onStart={() => { dragStart.current = edit; }}
               onChange={(v) => setEdit((s) => ({ ...s, crop: { ...s.crop, zoom: v } }))}
-              onEnd={() => { if (dragStart.current) commit(edit, dragStart.current); dragStart.current = null; }}
+              onEnd={() => { pushHistory(dragStart.current); dragStart.current = null; }}
               format={(v) => `${v.toFixed(2)}×`}
               onReset={() => apply((s) => ({ ...s, crop: { ...s.crop, zoom: 1 } }))}
               onLearn={(d, v) => showLearn({ ...learnFromSlider(d, v), value: `${v.toFixed(2)}×`, effect: undefined })}
@@ -754,7 +1041,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
               value={edit.crop.angle}
               onStart={() => { dragStart.current = edit; }}
               onChange={(v) => setEdit((s) => ({ ...s, crop: { ...s.crop, angle: v } }))}
-              onEnd={() => { if (dragStart.current) commit(edit, dragStart.current); dragStart.current = null; }}
+              onEnd={() => { pushHistory(dragStart.current); dragStart.current = null; }}
               format={(v) => `${v.toFixed(1)}°`}
               onReset={() => apply((s) => ({ ...s, crop: { ...s.crop, angle: 0 } }))}
               onLearn={(d, v) => showLearn({ ...learnFromSlider(d, v), value: `${v.toFixed(1)}°` })}
@@ -806,7 +1093,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
   const showGrid = tab === 'recorte' || grid;
 
   return (
-    <div className="editor">
+    <div className={`editor ${full ? 'full' : ''}`}>
       <header className="topbar">
         <button className="icon" onClick={onBack} aria-label="Regresar"><ArrowLeft /></button>
         <div className="topbar-mid">
@@ -817,7 +1104,12 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
             onPointerDown={() => setBypass(true)} onPointerUp={() => setBypass(false)} onPointerLeave={() => setBypass(false)}
             aria-label="Mantén para ver el original"
           ><Eye /></button>
-          <button className={`icon ${grid ? 'on' : ''}`} onClick={() => setGrid(!grid)} aria-label="Cuadrícula"><Grid3x3 /></button>
+            <button className={`icon ${grid ? 'on' : ''}`} onClick={() => setGrid(!grid)} aria-label="Cuadrícula"><Grid3x3 /></button>
+          <button
+            className={`icon ${full ? 'on' : ''}`}
+            onClick={() => { setFull(!full); setPanelHidden(false); }}
+            aria-label={full ? 'Salir de pantalla completa' : 'Pantalla completa'}
+          >{full ? <Minimize2 /> : <Maximize2 />}</button>
         </div>
         <button className="icon" onClick={saveProject} aria-label="Guardar"><Save /></button>
         <button className="icon accent" onClick={() => runExport('gallery')} aria-label="Exportar a galería"><Download /></button>
@@ -828,6 +1120,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
             <button onClick={() => runExport('gallery', 2048)}><Download size={16} /> Exportar para redes (2048 px)</button>
             <button onClick={() => runExport('share')}><Share2 size={16} /> Compartir…</button>
             <button onClick={() => { setMenu(false); saveProject(); }}><Save size={16} /> Guardar en "Mis fotos"</button>
+            <button onClick={runBatch}><Images size={16} /> Aplicar este estilo a más fotos…</button>
             <button onClick={copyAdjustments}><Copy size={16} /> Copiar ajustes</button>
             <button onClick={pasteAdjustments}><ClipboardPaste size={16} /> Pegar ajustes</button>
             <button onClick={resetAll}><RotateCcw size={16} /> Restablecer todo</button>
@@ -861,11 +1154,19 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
 
       <LearnBubble info={learn} onClose={() => setLearn(null)} />
 
-      <section className="controls">{panel()}</section>
+      {!(full && panelHidden) && <section className="controls">{panel()}</section>}
 
       <nav className="tabs">
         {TABS.map((t) => (
-          <button key={t.id} className={tab === t.id ? 'active' : ''} onClick={() => setTab(t.id)}>
+          <button
+            key={t.id}
+            className={tab === t.id ? 'active' : ''}
+            onClick={() => {
+              // En pantalla completa, volver a tocar la pestaña abierta esconde el panel
+              if (full && tab === t.id) { setPanelHidden((h) => !h); return; }
+              setTab(t.id); setPaint('off'); setPicking(false); setPanelHidden(false);
+            }}
+          >
             <t.icon size={20} />
             <span>{t.label}</span>
           </button>
@@ -873,6 +1174,14 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
       </nav>
 
       {busy && <div className="busy"><Loader2 className="spin" size={32} /><p>{busy}</p></div>}
+      {batch && (
+        <div className="busy">
+          <Loader2 className="spin" size={32} />
+          <p>Revelando {batch.done + 1} de {batch.total}…</p>
+          <p className="muted small">Se guardan en la galería conforme van saliendo.</p>
+          <button className="btn small" onClick={() => { cancelBatch.current = true; }}>Detener</button>
+        </div>
+      )}
     </div>
   );
 }

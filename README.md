@@ -20,6 +20,12 @@ dos personajes de IA:
 - **Recorte con los dedos**: pellizca para acercar (hasta 6×), arrastra para mover y doble toque para acercar de golpe al punto que tocaste. Formatos fijos (1:1, 4:5, 9:16, 2.39:1…), enderezado y aviso de con cuántos píxeles te quedas.
 - **Aprende mientras editas**: cada control explica qué hace al moverlo. Toca el nombre para ver la explicación y dale doble toque para restablecerlo.
 - **Gemelas (Gemini o Groq)**: califican la foto, dan consejos de encuadre y color, sugieren estilo, recorte y ajustes, y dejan una lección.
+- **Quitar objetos**: pintas encima de lo que estorba y la app busca alrededor un pedazo parecido para taparlo (hasta 20 por foto).
+- **Pincel manual**: corrige a mano lo que la IA dejó fuera del recorte del sujeto (pelucas, props, alas).
+- **Curva de tonos**: cinco puntos que se arrastran, con interpolación monótona para que no aparezcan halos.
+- **Aplicar a más fotos**: el mismo estilo y ajustes a toda una sesión, guardando cada una en la galería.
+- **Pantalla completa**: la foto ocupa todo y las barras quedan encima translúcidas; tocar otra vez la pestaña abierta esconde el panel.
+- **Calidad al acercar**: al pasar de 1.5× la app recarga la foto a resolución real y la GPU muestrea con Catmull-Rom en vez del filtro simple.
 - **Gotero de balance de blancos**: tocas un gris o un blanco de la foto y calcula la temperatura y el matiz que lo dejan neutro. Pensado para luces de escenario.
 - **Avisar quemados y pegados**: marca en rojo lo que salió blanco total y en azul lo que salió negro total, para no entregar un traje blanco sin textura.
 - **Guardar** (proyecto editable), **Exportar** en JPG de máxima calidad al álbum *Nakamura Twins Studio*, **Exportar para redes** (2048 px), **Compartir**, **Deshacer y rehacer**, **Antes/después** (mantén presionado el ojo), y **Copiar y pegar ajustes**.
