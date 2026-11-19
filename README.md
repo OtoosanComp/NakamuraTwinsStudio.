@@ -16,7 +16,8 @@ dos personajes de IA:
 - **Reducir ruido**: limpia las manchas de color de las sombras cuando disparas con ISO alto. El Auto Pro lo ajusta solo según el ISO de la foto.
 - **Auto Pro**: analiza la exposición, el balance de blancos y el contraste, y corrige como lo haría un fotógrafo.
 - **Estilos**: Caballero de la Noche (estilo Nolan), City Pop, Candy, Neón Nocturno, Concreto, Hora Dorada (teal & orange), Calle B/N y los estilos que tú guardes.
-- **Controles tipo Lightroom**: Luz, Color, Mezcla HSL por color, Gradación de color, Efectos (claridad, neblina, nitidez, desvanecer, viñeta y grano), Recorte y enderezado (con formato de cine 2.39:1).
+- **Controles tipo Lightroom**: Luz, Color, Mezcla HSL por color, Gradación de color, Efectos (claridad, neblina, nitidez, desvanecer, viñeta y grano).
+- **Recorte con los dedos**: pellizca para acercar (hasta 6×), arrastra para mover y doble toque para acercar de golpe al punto que tocaste. Formatos fijos (1:1, 4:5, 9:16, 2.39:1…), enderezado y aviso de con cuántos píxeles te quedas.
 - **Aprende mientras editas**: cada control explica qué hace al moverlo. Toca el nombre para ver la explicación y dale doble toque para restablecerlo.
 - **Gemelas (Gemini o Groq)**: califican la foto, dan consejos de encuadre y color, sugieren estilo, recorte y ajustes, y dejan una lección.
 - **Gotero de balance de blancos**: tocas un gris o un blanco de la foto y calcula la temperatura y el matiz que lo dejan neutro. Pensado para luces de escenario.

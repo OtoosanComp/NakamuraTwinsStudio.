@@ -48,6 +48,9 @@ const TABS: { id: Tab; label: string; icon: typeof Sun }[] = [
 
 const CLIP_KEY = 'nts.clipboard';
 
+/** Hasta dónde se puede acercar el recorte. */
+const ZOOM_MAX = 6;
+
 export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
   source: EditorSource;
   settings: Settings;
@@ -99,6 +102,10 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     return r.w / r.h;
   }, [photo, edit.crop]);
   const fit = useFit(stageRef, outAspect, 8);
+  const outPx = useMemo(() => {
+    if (!photo) return null;
+    return outputSize(edit.crop, photo.fullW, photo.fullH, 99999);
+  }, [photo, edit.crop]);
 
   // ---------- Cargar la foto ----------
   useEffect(() => {
@@ -143,23 +150,28 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     return ctx;
   }, [photo]);
 
-  /** Toca un gris o blanco: calculamos temperatura y matiz que lo dejan neutro. */
-  const pickWhiteBalance = (clientX: number, clientY: number) => {
+  /** Del punto que tocaste en pantalla al píxel de la foto, deshaciendo recorte y giro. */
+  const imagePointAt = (clientX: number, clientY: number) => {
     const cv = canvasRef.current;
-    const ctx = sampleCtx();
-    if (!cv || !ctx || !photo) return;
+    if (!cv || !photo) return null;
     const r = cv.getBoundingClientRect();
     const u = (clientX - r.left) / r.width;
     const v = (clientY - r.top) / r.height;
-    if (u < 0 || u > 1 || v < 0 || v > 1) return;
-
-    // Del punto en pantalla al pixel de la foto, deshaciendo recorte y giro.
+    if (u < 0 || u > 1 || v < 0 || v > 1) return null;
     const rect = resolveCrop(edit.crop, photo.previewW, photo.previewH);
     const qx = (u - 0.5) * rect.w, qy = (v - 0.5) * rect.h;
     const cs = Math.cos(rect.angle), sn = Math.sin(rect.angle);
+    return { x: rect.cx + qx * cs - qy * sn, y: rect.cy + qx * sn + qy * cs };
+  };
+
+  /** Toca un gris o blanco: calculamos temperatura y matiz que lo dejan neutro. */
+  const pickWhiteBalance = (clientX: number, clientY: number) => {
+    const ctx = sampleCtx();
+    const pt = imagePointAt(clientX, clientY);
+    if (!ctx || !pt || !photo) return;
     const scale = ctx.canvas.width / photo.previewW;
-    const px = (rect.cx + qx * cs - qy * sn) * scale;
-    const py = (rect.cy + qx * sn + qy * cs) * scale;
+    const px = pt.x * scale;
+    const py = pt.y * scale;
 
     const S = 7;
     const x0 = Math.max(0, Math.min(ctx.canvas.width - S, Math.round(px) - (S >> 1)));
@@ -297,32 +309,99 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     if (p) showLearn({ title: `${p.name} · ${p.subtitle}`, body: p.recipe.split('. ')[0] + '. Toca "Cómo se hace este look" para ver la receta completa.', tip: p.suggestAspect ? 'Prueba el recorte 2.39:1 en la pestaña Recorte.' : undefined });
   };
 
-  // ---------- Recorte: arrastrar para mover ----------
-  const drag = useRef<{ x: number; y: number; crop: CropState } | null>(null);
+  // ---------- Encuadre con los dedos: pellizcar, arrastrar y doble toque ----------
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const gesture = useRef<{ dist: number; mx: number; my: number; crop: CropState; baseX: number; baseY: number } | null>(null);
+  const lastTap = useRef({ t: 0, x: 0, y: 0 });
+
+  const fingers = () => [...pointers.current.values()];
+  const midpoint = (pts: { x: number; y: number }[]) => ({
+    x: pts.reduce((a, p) => a + p.x, 0) / pts.length,
+    y: pts.reduce((a, p) => a + p.y, 0) / pts.length,
+  });
+
+  /** Guarda el estado del que parte el gesto, para que el movimiento sea relativo a él. */
+  const beginGesture = () => {
+    const pts = fingers();
+    if (!pts.length || !photo) { gesture.current = null; return; }
+    const m = midpoint(pts);
+    const base = resolveCrop(edit.crop, photo.previewW, photo.previewH);
+    gesture.current = {
+      dist: pts.length >= 2 ? Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) : 0,
+      mx: m.x, my: m.y, crop: edit.crop, baseX: base.cx, baseY: base.cy,
+    };
+  };
+
+  /** Doble toque: acerca al punto que tocaste, o regresa a la foto completa. */
+  const doubleTapZoom = (clientX: number, clientY: number) => {
+    if (!photo) return;
+    if (edit.crop.zoom > 1.05) {
+      apply((st) => ({ ...st, crop: { ...st.crop, zoom: 1 } }));
+      return;
+    }
+    const pt = imagePointAt(clientX, clientY);
+    if (!pt) return;
+    apply((st) => ({
+      ...st,
+      crop: { ...st.crop, zoom: 2.5, cx: pt.x / photo.previewW, cy: pt.y / photo.previewH },
+    }));
+  };
+
   const onPointerDown = (e: React.PointerEvent) => {
     if (picking) { pickWhiteBalance(e.clientX, e.clientY); return; }
-    if (tab !== 'recorte' || !photo) return;
+    if (!photo) return;
     (e.target as Element).setPointerCapture(e.pointerId);
-    drag.current = { x: e.clientX, y: e.clientY, crop: edit.crop };
-    dragStart.current = edit;
+    if (pointers.current.size === 0) {
+      const now = Date.now();
+      const near = Math.hypot(e.clientX - lastTap.current.x, e.clientY - lastTap.current.y) < 40;
+      if (now - lastTap.current.t < 320 && near) {
+        lastTap.current = { t: 0, x: 0, y: 0 };
+        doubleTapZoom(e.clientX, e.clientY);
+        return;
+      }
+      lastTap.current = { t: now, x: e.clientX, y: e.clientY };
+      dragStart.current = edit;
+    }
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    beginGesture();
   };
+
   const onPointerMove = (e: React.PointerEvent) => {
-    const d = drag.current;
-    if (!d || !photo || !canvasRef.current) return;
-    const rect = resolveCrop(d.crop, photo.previewW, photo.previewH);
-    const scale = rect.w / canvasRef.current.getBoundingClientRect().width;
-    const dx = (e.clientX - d.x) * scale, dy = (e.clientY - d.y) * scale;
-    const cs = Math.cos(rect.angle), sn = Math.sin(rect.angle);
+    if (!pointers.current.has(e.pointerId)) return;
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const g = gesture.current;
+    const cv = canvasRef.current;
+    if (!g || !photo || !cv) return;
+    const pts = fingers();
+    const m = midpoint(pts);
+
+    // Dos dedos: la separación entre ellos manda el acercamiento.
+    let zoom = g.crop.zoom;
+    if (pts.length >= 2 && g.dist > 10) {
+      const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      zoom = Math.min(ZOOM_MAX, Math.max(1, g.crop.zoom * (d / g.dist)));
+    }
+
+    // Mover: lo que se desplazó el centro de los dedos, en píxeles de la foto.
+    const cur = resolveCrop({ ...g.crop, zoom }, photo.previewW, photo.previewH);
+    const scale = cur.w / cv.getBoundingClientRect().width;
+    const dx = (m.x - g.mx) * scale, dy = (m.y - g.my) * scale;
+    const cs = Math.cos(cur.angle), sn = Math.sin(cur.angle);
     const rx = dx * cs - dy * sn, ry = dx * sn + dy * cs;
-    // Usamos la posición real (ya limitada) como punto de partida para que se sienta natural
-    const cx = rect.cx / photo.previewW - rx / photo.previewW;
-    const cy = rect.cy / photo.previewH - ry / photo.previewH;
-    setEdit((st) => ({ ...st, crop: { ...st.crop, cx: Math.min(1, Math.max(0, cx)), cy: Math.min(1, Math.max(0, cy)) } }));
+    const cx = (g.baseX - rx) / photo.previewW;
+    const cy = (g.baseY - ry) / photo.previewH;
+    setEdit((st) => ({
+      ...st,
+      crop: { ...st.crop, zoom, cx: Math.min(1, Math.max(0, cx)), cy: Math.min(1, Math.max(0, cy)) },
+    }));
   };
-  const onPointerUp = () => {
-    if (drag.current && dragStart.current) commit(edit, dragStart.current);
-    drag.current = null;
+
+  const onPointerUp = (e: React.PointerEvent) => {
+    pointers.current.delete(e.pointerId);
+    if (pointers.current.size > 0) { beginGesture(); return; }
+    if (dragStart.current && dragStart.current !== edit) commit(edit, dragStart.current);
     dragStart.current = null;
+    gesture.current = null;
   };
 
   // ---------- Guardar / exportar ----------
@@ -641,7 +720,26 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
       case 'recorte':
         return (
           <div className="panel">
-            <p className="muted small">Arrastra la foto para encuadrar. La cuadrícula de tercios te ayuda: pon lo importante en las líneas o cruces.</p>
+            <p className="muted small">
+              <b>Pellizca con dos dedos</b> sobre la foto para acercar y <b>arrastra</b> para mover.
+              Doble toque acerca de golpe al punto que tocaste.
+            </p>
+            <Slider
+              def={{ key: 'contrast', label: 'Acercar', min: 1, max: ZOOM_MAX, step: 0.01, what: 'Recorta más cerca del sujeto para que el fondo estorbe menos.', up: 'Más cerca: la persona llena el cuadro.', down: 'Más lejos, hasta la foto completa.', tip: 'Es el mismo zoom del pellizco. Al acercar pierdes píxeles: abajo ves con cuántos te quedas.' }}
+              value={edit.crop.zoom}
+              onStart={() => { dragStart.current = edit; }}
+              onChange={(v) => setEdit((s) => ({ ...s, crop: { ...s.crop, zoom: v } }))}
+              onEnd={() => { if (dragStart.current) commit(edit, dragStart.current); dragStart.current = null; }}
+              format={(v) => `${v.toFixed(2)}×`}
+              onReset={() => apply((s) => ({ ...s, crop: { ...s.crop, zoom: 1 } }))}
+              onLearn={(d, v) => showLearn({ ...learnFromSlider(d, v), value: `${v.toFixed(2)}×`, effect: undefined })}
+            />
+            {outPx && (
+              <p className={`out-size ${Math.min(outPx.w, outPx.h) < 1000 ? 'warn' : ''}`}>
+                Te queda una foto de <b>{outPx.w} × {outPx.h} px</b>
+                {Math.min(outPx.w, outPx.h) < 1000 ? ' · ya es poca resolución para imprimir' : ''}
+              </p>
+            )}
             <div className="chips">
               {ASPECTS.map((a) => (
                 <button
@@ -652,7 +750,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
               ))}
             </div>
             <Slider
-              def={{ key: 'contrast', label: 'Enderezar', min: -20, max: 20, step: 0.1, what: 'Gira la foto para que el horizonte o los edificios queden rectos.', up: 'Gira a la derecha (sentido del reloj).', down: 'Gira a la izquierda.', tip: 'Un horizonte chueco es el error #1 de encuadre. Fíjate en el mar, el piso o las líneas de los edificios.' }}
+              def={{ key: 'contrast', label: 'Enderezar', min: -20, max: 20, step: 0.1, what: 'Gira la foto para que el horizonte o los edificios queden rectos.', up: 'Gira a la derecha (sentido del reloj).', down: 'Gira a la izquierda.', tip: 'Un horizonte chueco es el error #1 de encuadre. Fíjate en el piso o las líneas de los edificios.' }}
               value={edit.crop.angle}
               onStart={() => { dragStart.current = edit; }}
               onChange={(v) => setEdit((s) => ({ ...s, crop: { ...s.crop, angle: v } }))}
@@ -660,16 +758,6 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
               format={(v) => `${v.toFixed(1)}°`}
               onReset={() => apply((s) => ({ ...s, crop: { ...s.crop, angle: 0 } }))}
               onLearn={(d, v) => showLearn({ ...learnFromSlider(d, v), value: `${v.toFixed(1)}°` })}
-            />
-            <Slider
-              def={{ key: 'contrast', label: 'Acercar', min: 1, max: 3, step: 0.01, what: 'Recorta más cerca del sujeto.', up: 'Más cerca: quitas distracciones.', down: 'Más lejos.', tip: 'Si algo no suma a la historia de la foto, recórtalo.' }}
-              value={edit.crop.zoom}
-              onStart={() => { dragStart.current = edit; }}
-              onChange={(v) => setEdit((s) => ({ ...s, crop: { ...s.crop, zoom: v } }))}
-              onEnd={() => { if (dragStart.current) commit(edit, dragStart.current); dragStart.current = null; }}
-              format={(v) => `${v.toFixed(2)}×`}
-              onReset={() => apply((s) => ({ ...s, crop: { ...s.crop, zoom: 1 } }))}
-              onLearn={(d, v) => showLearn({ ...learnFromSlider(d, v), value: `${v.toFixed(2)}×`, effect: undefined })}
             />
             <div className="row">
               <button
@@ -687,7 +775,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
               ><Users size={14} /> Centrar en la persona</button>
               <button className="btn ghost small" onClick={() => apply((s) => ({ ...s, crop: defaultCrop() }))}><RotateCcw size={14} /> Quitar recorte</button>
             </div>
-            {!mask && <p className="muted small">Para centrar en la persona, primero usa "Separar sujeto del fondo" en la pestaña Sujeto.</p>}
+            {!mask && <p className="muted small">El centrado automático necesita "Separar sujeto del fondo" (pestaña Sujeto). El pellizco y el arrastre funcionan siempre.</p>}
           </div>
         );
       case 'gemelas':

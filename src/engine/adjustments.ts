@@ -389,6 +389,6 @@ export function cropOnSubject(
   const subjW = Math.max(1, (box.x1 - box.x0) * imgW);
   const subjH = Math.max(1, (box.y1 - box.y0) * imgH);
   // El zoom lo manda el lado que primero toca el borde del recorte
-  const zoom = Math.min(3, Math.max(1, Math.min((baseW * fill) / subjW, (baseH * fill) / subjH)));
+  const zoom = Math.min(6, Math.max(1, Math.min((baseW * fill) / subjW, (baseH * fill) / subjH)));
   return { ...current, zoom, cx: (box.x0 + box.x1) / 2, cy: (box.y0 + box.y1) / 2 };
 }

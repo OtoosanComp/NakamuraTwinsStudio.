@@ -308,3 +308,6 @@ ul.basics { margin: 0; padding-left: 18px; font-size: 0.88em; }
 ul.basics li { margin: 7px 0; line-height: 1.4; }
 .section-title { font-weight: 700; font-size: 0.9em; margin: 12px 0 2px; }
 .panel .row { gap: 8px; flex-wrap: wrap; }
+
+.out-size { font-size: 0.82em; color: var(--muted); margin: -2px 0 2px; }
+.out-size.warn { color: #ffd479; }
