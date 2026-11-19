@@ -18,10 +18,16 @@ export interface EditState {
   crop: CropState;
   /** true = ya separaste al sujeto del fondo con la IA del teléfono */
   maskOn: boolean;
+  /** Estilo solo para la persona. null = lleva el mismo estilo que el fondo. */
+  subjectPresetId: string | null;
+  subjectAmount: number;
 }
 
 export function initialEdit(): EditState {
-  return { autoOn: true, auto: {}, presetId: null, amount: 1, user: {}, crop: defaultCrop(), maskOn: false };
+  return {
+    autoOn: true, auto: {}, presetId: null, amount: 1, user: {},
+    crop: defaultCrop(), maskOn: false, subjectPresetId: null, subjectAmount: 1,
+  };
 }
 
 /** Valor antes de tus ajustes manuales (automático + estilo). */
@@ -73,4 +79,13 @@ export function addToUser(st: EditState, delta: PartialAdj): EditState {
     else user[k] = (user[k] ?? 0) + v;
   }
   return { ...st, user };
+}
+
+/**
+ * Ajustes para la persona cuando le pusiste un estilo propio.
+ * Lo que mueves a mano se aplica igual a los dos: solo cambia la capa del estilo.
+ */
+export function composeSubject(st: EditState, subjectPreset: Preset | undefined): Adjustments | null {
+  if (!st.maskOn || !subjectPreset) return null;
+  return composeAdjustments({ ...st, amount: st.subjectAmount }, subjectPreset);
 }

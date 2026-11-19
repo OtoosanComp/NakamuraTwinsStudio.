@@ -55,11 +55,14 @@ async function getSegmenter(): Promise<ImageSegmenter> {
   return loading;
 }
 
-/**
- * Devuelve una imagen en blanco y negro del mismo encuadre que la foto:
- * blanco = persona, negro = fondo.
- */
-export async function personMask(source: ImageBitmap | HTMLCanvasElement): Promise<HTMLCanvasElement> {
+export interface PersonMask {
+  /** Imagen en blanco y negro del mismo encuadre que la foto: blanco = persona, negro = fondo. */
+  canvas: HTMLCanvasElement;
+  /** Recuadro que ocupa la persona, en fracciones de 0 a 1 de la foto. */
+  box: { x0: number; y0: number; x1: number; y1: number };
+}
+
+export async function personMask(source: ImageBitmap | HTMLCanvasElement): Promise<PersonMask> {
   const seg = await getSegmenter();
 
   let input: HTMLCanvasElement;
@@ -83,9 +86,17 @@ export async function personMask(source: ImageBitmap | HTMLCanvasElement): Promi
   const ctx = full.getContext('2d')!;
   const img = ctx.createImageData(w, h);
   let covered = 0;
+  let x0 = w, y0 = h, x1 = 0, y1 = 0;
   for (let i = 0; i < values.length; i++) {
     const v = values[i];
-    if (v > 0.5) covered++;
+    if (v > 0.5) {
+      covered++;
+      const x = i % w, y = (i / w) | 0;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
     const g = v * 255;
     const o = i * 4;
     img.data[o] = img.data[o + 1] = img.data[o + 2] = g;
@@ -94,11 +105,12 @@ export async function personMask(source: ImageBitmap | HTMLCanvasElement): Promi
   ctx.putImageData(img, 0, 0);
   result.close();
 
-  if (covered / values.length < 0.01) throw new Error('No encontré personas en esta foto.');
+  if (covered / values.length < 0.005) throw new Error('No encontré personas en esta foto.');
+  const box = { x0: x0 / w, y0: y0 / h, x1: (x1 + 1) / w, y1: (y1 + 1) / h };
 
   // Reducimos la máscara: el borde suave sale gratis del filtrado de la GPU y gasta menos memoria.
   const k = Math.min(1, MASK_MAX / Math.max(w, h));
-  if (k === 1) return full;
+  if (k === 1) return { canvas: full, box };
   const small = document.createElement('canvas');
   small.width = Math.max(1, Math.round(w * k));
   small.height = Math.max(1, Math.round(h * k));
@@ -106,5 +118,5 @@ export async function personMask(source: ImageBitmap | HTMLCanvasElement): Promi
   sctx.imageSmoothingQuality = 'high';
   sctx.drawImage(full, 0, 0, small.width, small.height);
   full.width = full.height = 1;
-  return small;
+  return { canvas: small, box };
 }

@@ -370,3 +370,25 @@ export function resolveCrop(c: CropState, imgW: number, imgH: number): CropRect 
   else for (let i = 0; i < 25; i++) { const m = (lo + hi) / 2; if (fits(w, h, icx + (tx - icx) * m, icy + (ty - icy) * m)) lo = m; else hi = m; }
   return { cx: icx + (tx - icx) * lo, cy: icy + (ty - icy) * lo, w, h, angle };
 }
+
+/**
+ * Encuadre que centra a la persona y la deja ocupando buena parte del cuadro.
+ * `box` viene de la máscara del sujeto, en fracciones de 0 a 1.
+ */
+export function cropOnSubject(
+  current: CropState,
+  box: { x0: number; y0: number; x1: number; y1: number },
+  imgW: number,
+  imgH: number,
+  fill = 0.82,
+): CropState {
+  const aspect = current.aspect ?? imgW / imgH;
+  // Tamaño del recorte con zoom 1, igual que resolveCrop
+  let baseW = imgW, baseH = imgW / aspect;
+  if (baseH > imgH) { baseH = imgH; baseW = imgH * aspect; }
+  const subjW = Math.max(1, (box.x1 - box.x0) * imgW);
+  const subjH = Math.max(1, (box.y1 - box.y0) * imgH);
+  // El zoom lo manda el lado que primero toca el borde del recorte
+  const zoom = Math.min(3, Math.max(1, Math.min((baseW * fill) / subjW, (baseH * fill) / subjH)));
+  return { ...current, zoom, cx: (box.x0 + box.x1) / 2, cy: (box.y0 + box.y1) / 2 };
+}

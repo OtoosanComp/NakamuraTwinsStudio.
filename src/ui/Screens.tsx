@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { ArrowLeft, Aperture, Images, Settings as Gear, Trash2, ExternalLink, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { ArrowLeft, BookOpen, Images, Settings as Gear, Trash2, ExternalLink, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { TWINS } from '../ai/twins';
 import { projects, AI_MODELS, KEY_URL, PROVIDER_NAMES, hasAiKey, type Project, type Settings } from '../lib/storage';
 import { TwinAvatar, TwinBubble } from './Twins';
+import { PRESETS, SHOOT_BASICS, type Preset } from '../engine/presets';
 
 const GREETINGS = [
   ['La regla de tercios es pura división: parte la foto en 9 y pon lo importante en las líneas.', '¡Busca color! Un traje claro contra un fondo oscuro siempre gana.'],
@@ -11,9 +12,9 @@ const GREETINGS = [
   ['Composición con ritmo: repetir una forma 3 veces guía la mirada como un compás.', 'Los colores opuestos (azul y naranja) siempre se ven de cine.'],
 ];
 
-export function Home({ onGallery, onStudioCamera, onLibrary, onSettings, onOpenProject, hasKey }: {
+export function Home({ onGallery, onGuide, onLibrary, onSettings, onOpenProject, hasKey }: {
   onGallery: () => void;
-  onStudioCamera: () => void;
+  onGuide: () => void;
   onLibrary: () => void;
   onSettings: () => void;
   onOpenProject: (p: Project) => void;
@@ -50,10 +51,10 @@ export function Home({ onGallery, onStudioCamera, onLibrary, onSettings, onOpenP
           <b>Abrir de la galería</b>
           <small>Tus fotos del Redmi. Dispara en modo Pro con la cámara del teléfono y ábrelas aquí.</small>
         </button>
-        <button className="action" onClick={onStudioCamera}>
-          <Aperture size={28} />
-          <b>Cámara Studio</b>
-          <small>Ve el estilo en vivo, con cuadrícula, nivel y consejos</small>
+        <button className="action" onClick={onGuide}>
+          <BookOpen size={28} />
+          <b>Cómo tomar cada estilo</b>
+          <small>Los parámetros de modo Pro para que la foto ya salga lista</small>
         </button>
       </div>
 
@@ -206,6 +207,65 @@ export function SettingsScreen({ settings, onChange, onBack }: {
       </section>
 
       <p className="muted small center">Nakamura Twins Studio · v1.0</p>
+    </div>
+  );
+}
+
+export function StyleGuide({ onBack }: { onBack: () => void }) {
+  const [sel, setSel] = useState<Preset>(PRESETS[0]);
+  const sh = sel.shoot;
+  const rows: [string, string | undefined][] = sh
+    ? [
+        ['Luz que buscar', sh.luz],
+        ['RAW', sh.raw],
+        ['ISO', sh.iso],
+        ['Velocidad (S)', sh.velocidad],
+        ['Balance (WB)', sh.wb],
+        ['Exposición (EV)', sh.ev],
+        ['Enfoque (F)', sh.enfoque],
+        ['Encuadre', sh.encuadre],
+      ]
+    : [];
+  return (
+    <div className="screen">
+      <header className="topbar plain">
+        <button className="icon" onClick={onBack} aria-label="Regresar"><ArrowLeft /></button>
+        <h2>Cómo tomar cada estilo</h2>
+        <span />
+      </header>
+      <p className="muted small">
+        Pon la cámara del teléfono en <b>Pro</b> y copia estos valores. Si la foto ya sale cerca del estilo,
+        la edición solo la remata y no tienes que forzar nada.
+      </p>
+
+      <div className="preset-strip">
+        {PRESETS.map((p) => (
+          <button key={p.id} className={`preset-card ${sel.id === p.id ? 'active' : ''}`} onClick={() => setSel(p)}>
+            <div className="preset-swatch" style={{ background: `linear-gradient(135deg, ${p.palette.join(',')})` }} />
+            <span>{p.name}</span>
+            <small>{p.subtitle}</small>
+          </button>
+        ))}
+      </div>
+
+      <section className="card">
+        <h3>{sel.name}</h3>
+        <table className="shoot">
+          <tbody>
+            {rows.map(([k, v]) => (
+              <tr key={k}><th>{k}</th><td>{v}</td></tr>
+            ))}
+          </tbody>
+        </table>
+        {sh && <p className="lesson-inline">💡 {sh.truco}</p>}
+      </section>
+
+      <section className="card">
+        <h3>Vale para todas</h3>
+        <ul className="basics">
+          {SHOOT_BASICS.map((b) => <li key={b}>{b}</li>)}
+        </ul>
+      </section>
     </div>
   );
 }

@@ -4,15 +4,15 @@ import {
   Droplets, SlidersHorizontal, Crop, Film, Wand2, RotateCcw, Copy, ClipboardPaste, Grid3x3, Loader2, Trash2, Users, Pipette, TriangleAlert,
 } from 'lucide-react';
 import {
-  ASPECTS, COLOR, EFFECTS, GRADING, HSL_COLORS, LIGHT, MASK, ALL_DEFS, defaultCrop, hslDefs, neutral,
+  ASPECTS, COLOR, EFFECTS, GRADING, HSL_COLORS, LIGHT, MASK, ALL_DEFS, cropOnSubject, defaultCrop, hslDefs, neutral,
   resolveCrop, type CropState, type PartialAdj, type SliderDef, type Adjustments,
 } from '../engine/adjustments';
 import { analyzeImage, type Analysis } from '../engine/analyze';
 import {
-  addToUser, baseValue, composeAdjustments, initialEdit, resetKey, setFinalValue, type EditState,
+  addToUser, baseValue, composeAdjustments, composeSubject, initialEdit, resetKey, setFinalValue, type EditState,
 } from '../engine/editState';
 import { PRESETS, loadCustomPresets, saveCustomPresets, type Preset } from '../engine/presets';
-import { personMask } from '../engine/segment';
+import { personMask, type PersonMask } from '../engine/segment';
 import { Renderer } from '../engine/renderer';
 import {
   PREVIEW_MAX, exportJpeg, formatShutter, loadPhoto, outputSize, smallJpegBase64, type LoadedPhoto,
@@ -77,7 +77,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
   const [grid, setGrid] = useState(false);
   const [hist, setHist] = useState<number[][] | null>(null);
   const [newPresetName, setNewPresetName] = useState('');
-  const [mask, setMask] = useState<HTMLCanvasElement | null>(null);
+  const [mask, setMask] = useState<PersonMask | null>(null);
   const [maskBusy, setMaskBusy] = useState(false);
   const [maskError, setMaskError] = useState<string | null>(null);
   const [showMask, setShowMask] = useState(false);
@@ -90,6 +90,8 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
   const allPresets = useMemo(() => [...PRESETS, ...custom], [custom]);
   const preset = allPresets.find((p) => p.id === edit.presetId);
   const adj = useMemo(() => composeAdjustments(edit, preset), [edit, preset]);
+  const subjectPreset = allPresets.find((p) => p.id === edit.subjectPresetId);
+  const subjAdj = useMemo(() => composeSubject(edit, subjectPreset), [edit, subjectPreset]);
   const stageRef = useRef<HTMLDivElement>(null);
   const outAspect = useMemo(() => {
     if (!photo) return 0;
@@ -189,7 +191,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
 
   // ---------- Máscara del sujeto ----------
   useEffect(() => {
-    rendererRef.current?.setMask(edit.maskOn ? mask : null);
+    rendererRef.current?.setMask(edit.maskOn ? mask?.canvas ?? null : null);
   }, [mask, edit.maskOn, photo]);
 
   const runMask = useCallback(async (silent = false) => {
@@ -219,10 +221,10 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     if (!r || !photo) return;
     const id = requestAnimationFrame(() => {
       const { rect, w, h } = outputSize(edit.crop, photo.previewW, photo.previewH, PREVIEW_MAX);
-      r.render(bypass ? neutral() : adj, rect, w, h, bypass, showMask, clip);
+      r.renderSplit(bypass ? neutral() : adj, subjAdj, rect, w, h, { bypass, showMask, clip });
     });
     return () => cancelAnimationFrame(id);
-  }, [adj, edit.crop, bypass, photo, mask, showMask, clip]);
+  }, [adj, subjAdj, edit.crop, bypass, photo, mask, showMask, clip]);
 
   // ---------- Histograma de la foto editada ----------
   useEffect(() => {
@@ -347,7 +349,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     setMenu(false);
     setBusy('Revelando en alta calidad…');
     try {
-      const jpeg = await exportJpeg(photo, adj, edit.crop, edit.maskOn ? mask : null, limit);
+      const jpeg = await exportJpeg(photo, adj, edit.crop, edit.maskOn ? mask : null, subjAdj, limit);
       if (mode === 'gallery') {
         const where = await saveToGallery(jpeg);
         toast(`¡Listo! Foto guardada en ${where}`);
@@ -583,9 +585,52 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
                     onPointerLeave={() => setShowMask(false)}
                   ><Eye size={14} /> Ver recorte</button>
                 </div>
-                {edit.maskOn
-                  ? MASK.map((d) => sliderFor(d))
-                  : <p className="muted small">Enciende el interruptor para ajustar al sujeto y al fondo por separado.</p>}
+                {edit.maskOn ? (
+                  <>
+                    <p className="section-title">Estilo solo para la persona</p>
+                    <p className="muted small">
+                      El fondo se queda con el estilo que elegiste en Estilos. Aquí le pones otro a la persona:
+                      por ejemplo fondo <b>Caballero de la Noche</b> y persona <b>Calle B/N</b>.
+                    </p>
+                    <div className="preset-strip">
+                      <button
+                        className={`preset-card ${!edit.subjectPresetId ? 'active' : ''}`}
+                        onClick={() => apply((st) => ({ ...st, subjectPresetId: null }))}
+                      >
+                        <div className="preset-swatch none">=</div>
+                        <span>El mismo</span>
+                        <small>que el fondo</small>
+                      </button>
+                      {allPresets.map((p) => (
+                        <button
+                          key={p.id}
+                          className={`preset-card ${edit.subjectPresetId === p.id ? 'active' : ''}`}
+                          onClick={() => apply((st) => ({ ...st, subjectPresetId: p.id }))}
+                        >
+                          <div className="preset-swatch" style={{ background: `linear-gradient(135deg, ${p.palette.join(',')})` }} />
+                          <span>{p.name}</span>
+                          <small>{p.subtitle}</small>
+                        </button>
+                      ))}
+                    </div>
+                    {edit.subjectPresetId && (
+                      <Slider
+                        def={{ key: 'contrast', label: 'Intensidad en la persona', min: 0, max: 150, step: 1, what: 'Qué tan fuerte se aplica el estilo solo a la persona.', up: 'Más marcado.', down: 'Más sutil.' }}
+                        value={Math.round(edit.subjectAmount * 100)}
+                        format={(v) => `${v}%`}
+                        onStart={() => { dragStart.current = edit; }}
+                        onChange={(v) => setEdit((st) => ({ ...st, subjectAmount: v / 100 }))}
+                        onEnd={() => { if (dragStart.current) commit(edit, dragStart.current); dragStart.current = null; }}
+                        onReset={() => apply((st) => ({ ...st, subjectAmount: 1 }))}
+                        onLearn={(d, v) => showLearn({ title: d.label, value: `${v}%`, body: d.what })}
+                      />
+                    )}
+                    <p className="section-title">Ajustes finos</p>
+                    {MASK.map((d) => sliderFor(d))}
+                  </>
+                ) : (
+                  <p className="muted small">Enciende el interruptor para ajustar al sujeto y al fondo por separado.</p>
+                )}
                 <button className="btn ghost small" onClick={() => { setMask(null); apply((st) => ({ ...st, maskOn: false })); }}>
                   <RotateCcw size={14} /> Calcular de nuevo
                 </button>
@@ -626,7 +671,23 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
               onReset={() => apply((s) => ({ ...s, crop: { ...s.crop, zoom: 1 } }))}
               onLearn={(d, v) => showLearn({ ...learnFromSlider(d, v), value: `${v.toFixed(2)}×`, effect: undefined })}
             />
-            <button className="btn ghost small" onClick={() => apply((s) => ({ ...s, crop: defaultCrop() }))}><RotateCcw size={14} /> Quitar recorte</button>
+            <div className="row">
+              <button
+                className="btn small"
+                disabled={!mask || !photo}
+                onClick={() => {
+                  if (!mask || !photo) return;
+                  apply((st) => ({ ...st, crop: cropOnSubject(st.crop, mask.box, photo.previewW, photo.previewH) }));
+                  showLearn({
+                    title: 'Centrar en la persona',
+                    body: 'Usé el recorte que ya calculó el teléfono para poner a la persona en el centro y llenar el cuadro.',
+                    tip: 'Después muévelo con el dedo: dejar aire del lado hacia donde mira se ve más natural que el centro exacto.',
+                  });
+                }}
+              ><Users size={14} /> Centrar en la persona</button>
+              <button className="btn ghost small" onClick={() => apply((s) => ({ ...s, crop: defaultCrop() }))}><RotateCcw size={14} /> Quitar recorte</button>
+            </div>
+            {!mask && <p className="muted small">Para centrar en la persona, primero usa "Separar sujeto del fondo" en la pestaña Sujeto.</p>}
           </div>
         );
       case 'gemelas':

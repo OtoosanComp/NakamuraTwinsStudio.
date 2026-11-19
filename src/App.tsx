@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { App as CapApp } from '@capacitor/app';
 import { Editor, type EditorSource } from './ui/Editor';
-import { StudioCamera } from './ui/StudioCamera';
-import { Home, Library, SettingsScreen } from './ui/Screens';
+import { Home, Library, SettingsScreen, StyleGuide } from './ui/Screens';
 import { pickFromGallery, isNative } from './lib/platform';
 import { hasAiKey, loadSettings, saveSettings, type Project, type Settings } from './lib/storage';
 
 type Screen =
   | { name: 'home' }
   | { name: 'editor'; source: EditorSource }
-  | { name: 'camera' }
+  | { name: 'guia' }
   | { name: 'library' }
   | { name: 'settings' };
 
@@ -22,7 +21,6 @@ export default function App() {
 
   const push = (s: Screen) => setStack((st) => [...st, s]);
   const back = useCallback(() => setStack((st) => (st.length > 1 ? st.slice(0, -1) : st)), []);
-  const replace = (s: Screen) => setStack((st) => [...st.slice(0, -1), s]);
 
   const toast = useCallback((m: string) => {
     setToastMsg(m);
@@ -59,7 +57,7 @@ export default function App() {
         <Home
           hasKey={hasAiKey(settings)}
           onGallery={fromGallery}
-          onStudioCamera={() => push({ name: 'camera' })}
+          onGuide={() => push({ name: 'guia' })}
           onLibrary={() => push({ name: 'library' })}
           onSettings={() => push({ name: 'settings' })}
           onOpenProject={openProject}
@@ -69,15 +67,8 @@ export default function App() {
     case 'editor':
       view = <Editor key={stack.length} source={screen.source} settings={settings} onBack={back} onOpenSettings={() => push({ name: 'settings' })} toast={toast} />;
       break;
-    case 'camera':
-      view = (
-        <StudioCamera
-          settings={settings}
-          toast={toast}
-          onBack={back}
-          onCapture={(blob, presetId) => replace({ name: 'editor', source: { blob, presetId } })}
-        />
-      );
+    case 'guia':
+      view = <StyleGuide onBack={back} />;
       break;
     case 'library':
       view = <Library onBack={back} onOpen={openProject} />;

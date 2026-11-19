@@ -11,8 +11,33 @@ export interface Preset {
   /** Proporción sugerida (solo se sugiere, no se aplica sola) */
   suggestAspect?: number;
   adj: PartialAdj;
+  /** Cómo disparar esta foto con el modo Pro del teléfono. */
+  shoot?: Shoot;
   custom?: boolean;
 }
+
+export interface Shoot {
+  /** Qué luz buscar. Es lo que más manda en el resultado. */
+  luz: string;
+  raw: string;
+  iso: string;
+  velocidad: string;
+  /** Kelvin: MÁS bajo = foto más fría/azul. MÁS alto = más cálida/naranja. */
+  wb: string;
+  ev: string;
+  enfoque: string;
+  encuadre: string;
+  truco: string;
+}
+
+/** Vale para cualquier estilo. */
+export const SHOOT_BASICS = [
+  'A 23 mm no bajes de 1/50 s sin apoyo. Con personas, 1/125 s: la gente se mueve aunque tú no.',
+  'Apoya el codo en el cuerpo, detén la respiración al disparar y usa el temporizador de 2 s si puedes recargarte en algo.',
+  'El ISO no ilumina, amplifica: también amplifica el ruido. Primero baja la velocidad, y solo al final sube el ISO.',
+  'En RAW el Redmi guarda un DNG y un JPG juntos. La app abre el JPG; el DNG guárdalo por si quieres volver a empezar.',
+  'En Kelvin: un número MÁS BAJO enfría la foto (azul) y uno MÁS ALTO la calienta (naranja).',
+];
 
 export const PRESETS: Preset[] = [
   {
@@ -26,6 +51,20 @@ export const PRESETS: Preset[] = [
       'sombras azul acero y negros profundos. La piel se conserva cálida para que las personas destaquen. ' +
       'Claridad alta para texturas duras de concreto y metal, viñeta para encerrar la mirada y un poco de grano de película. ' +
       'Pruébalo en formato 2.39:1 para que se vea como pantalla de cine.',
+    shoot: {
+      luz:
+        'Luz lateral y dura, de una sola fuente. Huye de la luz plana de frente: el look vive de la sombra.',
+      raw: 'Sí, RAW activado.',
+      iso: '50 a 200 de día. De noche no pases de 800.',
+      velocidad: '1/125 s o más rápido si hay gente.',
+      wb:
+        '4300 a 4800 K. Lo pones más frío que la luz real para que ya salga azulada.',
+      ev: '-0.3 a -0.7. Es preferible una foto oscura que un blanco quemado.',
+      enfoque: 'MF a los ojos. Acerca el visor para confirmarlo.',
+      encuadre: 'Deja aire arriba y prueba el recorte 2.39:1.',
+      truco:
+        'Busca un fondo liso y oscuro. Un traje claro sobre fondo oscuro es la mitad del look.',
+    },
     adj: {
       temperature: -18, tint: -4, contrast: 28, highlights: -35, shadows: -10, whites: 5, blacks: -22,
       vibrance: -10, saturation: -28, clarity: 22, dehaze: 10, sharpen: 20,
@@ -45,6 +84,18 @@ export const PRESETS: Preset[] = [
       'El look de las portadas de discos japoneses de los 80: atardeceres cálidos, cielos turquesa y magenta, ' +
       'sombras moradas y negros levantados como impresión vieja. Sombras abiertas, contraste suave e intensidad alta. ' +
       'Funciona increíble con edificios, autos y luces de la ciudad al atardecer.',
+    shoot: {
+      luz: 'La última hora de sol o la hora azul, con la ciudad o el cielo detrás.',
+      raw: 'Sí.',
+      iso: '50 a 100.',
+      velocidad: '1/125 s.',
+      wb: '6000 a 6800 K, para quedarte el calor del atardecer.',
+      ev: '-0.3, para que el cielo no se queme.',
+      enfoque: 'MF al sujeto.',
+      encuadre: '4:5 vertical con cielo en la parte de arriba.',
+      truco:
+        'Mete luces al fondo (letreros, faros, ventanas). Desenfocadas se ven como bolitas de color.',
+    },
     adj: {
       exposure: 0.15, contrast: -10, highlights: -20, shadows: 25, temperature: 12, tint: 14,
       vibrance: 35, saturation: 8, fade: 22, clarity: -10,
@@ -63,6 +114,19 @@ export const PRESETS: Preset[] = [
       'Brillante, suave y en tonos pastel: exposición arriba, contraste bajo y negros levantados. ' +
       'Los verdes se vuelven menta, los azules se aclaran a celeste y los rojos tiran a rosa. ' +
       'Un toque de magenta en todo y claridad negativa para piel suave. Ideal para retratos, comida y postres.',
+    shoot: {
+      luz:
+        'Suave y pareja: sombra abierta, día nublado o junto a una ventana grande. Nunca sol directo.',
+      raw: 'Sí.',
+      iso: '50 a 100.',
+      velocidad: '1/200 s.',
+      wb: '5400 a 5800 K.',
+      ev: '+0.3 a +0.7. Expón alto pero revisa que nada se queme.',
+      enfoque: 'MF a la cara.',
+      encuadre: '1:1 o 4:5, con fondo claro.',
+      truco:
+        'Una sombra dura rompe el pastel. Si hay sol, métete a la sombra de un edificio.',
+    },
     adj: {
       exposure: 0.35, contrast: -18, highlights: -30, shadows: 35, whites: 10, blacks: 15,
       temperature: 5, tint: 20, vibrance: 40, saturation: -5, fade: 15, clarity: -20,
@@ -79,6 +143,18 @@ export const PRESETS: Preset[] = [
     recipe:
       'Para fotos de noche en la ciudad: sombras turquesa, luces magenta, amarillos girados a naranja ' +
       'y verdes convertidos en aguamarina para que todo parezca neón. Contraste alto, quitar neblina y viñeta fuerte.',
+    shoot: {
+      luz:
+        'Que el neón o el LED de color le pegue al sujeto de lado o de atrás, no de frente.',
+      raw: 'Obligatorio. De noche el JPG solo se queda corto.',
+      iso: '400 a 800. Más arriba el ruido se come el color.',
+      velocidad: '1/60 s apoyado. 1/30 s solo con tripié o recargado en un muro.',
+      wb: '3600 a 4200 K. Frío, para que el neón resalte contra el ambiente.',
+      ev: '-1.0. El neón se quema facilísimo y queda como una mancha blanca.',
+      enfoque: 'MF siempre: de noche el autofoco se pierde.',
+      encuadre: '9:16 para redes o 2.39:1 para que se vea de cine.',
+      truco: 'Pide que no se mueva 2 segundos. A 1/60 s cualquier gesto sale movido.',
+    },
     adj: {
       exposure: -0.2, contrast: 22, highlights: -20, blacks: -15, temperature: -20, tint: 18,
       vibrance: 30, clarity: 15, dehaze: 15,
@@ -96,6 +172,19 @@ export const PRESETS: Preset[] = [
     recipe:
       'Calle dura y fría: casi sin color, con una dominante verde-amarillenta sucia, negros aplastados, ' +
       'mucha claridad y nitidez para las texturas del asfalto y los muros, grano grueso y viñeta pesada.',
+    shoot: {
+      luz:
+        'Día nublado o la sombra dura de un edificio. La luz pareja deja ver la textura.',
+      raw: 'Sí.',
+      iso: '50 a 200.',
+      velocidad: '1/250 s.',
+      wb: '5000 a 5200 K, neutro.',
+      ev: '0.',
+      enfoque: 'MF.',
+      encuadre: '3:2, e incluye textura: muro, asfalto, metal.',
+      truco:
+        'Este estilo vive de la superficie. Busca muros rayados, concreto viejo o cortina metálica.',
+    },
     adj: {
       temperature: 4, tint: -12, contrast: 35, highlights: -25, shadows: -15, blacks: -25,
       saturation: -45, clarity: 35, dehaze: 12, sharpen: 30,
@@ -111,6 +200,18 @@ export const PRESETS: Preset[] = [
     recipe:
       'El look más usado en el cine de acción: la piel y las luces se vuelven naranja y las sombras ' +
       'azul verdoso. Como son colores opuestos, las personas resaltan sobre el fondo.',
+    shoot: {
+      luz: 'Última hora de sol, con el sol DETRÁS del sujeto.',
+      raw: 'Sí.',
+      iso: '50.',
+      velocidad: '1/250 s.',
+      wb: '5600 a 6000 K.',
+      ev: '-0.3, pero midiendo en la cara, no en el cielo.',
+      enfoque: 'MF a los ojos.',
+      encuadre: '3:2 o 16:9.',
+      truco:
+        'Deja que el sol entre de lado y le haga brillo al pelo o a la peluca. Ese contraluz es el estilo.',
+    },
     adj: {
       temperature: 10, contrast: 20, highlights: -15, shadows: 10, vibrance: 20, clarity: 10,
       gradeShadowHue: 195, gradeShadowSat: 35, gradeHighHue: 35, gradeHighSat: 30,
@@ -126,6 +227,19 @@ export const PRESETS: Preset[] = [
     recipe:
       'Blanco y negro de fotografía callejera. Aunque no hay color, la mezcla HSL decide qué tan claro queda ' +
       'cada color en gris: bajar la luminancia de azules oscurece el cielo y sube el drama.',
+    shoot: {
+      luz:
+        'Sol duro de mediodía o una lámpara fuerte. Aquí sí quieres sombras marcadas.',
+      raw: 'Sí.',
+      iso: '50 a 400.',
+      velocidad: '1/250 s o más rápido.',
+      wb: '5200 K. Da igual el color, pero fíjalo para que no cambie entre tomas.',
+      ev: '-0.3.',
+      enfoque: 'MF.',
+      encuadre: '1:1 o 3:2.',
+      truco:
+        'Deja de ver colores y busca formas, líneas y sombras. Lo que no funciona en gris, no funciona.',
+    },
     adj: {
       saturation: -100, contrast: 40, highlights: -20, shadows: 10, blacks: -15, clarity: 30,
       hsl_red_l: 10, hsl_orange_l: 15, hsl_blue_l: -30, hsl_aqua_l: -15,

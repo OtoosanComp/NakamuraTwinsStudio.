@@ -44,7 +44,7 @@ uniform vec3 u_gS, u_gM, u_gH;
 uniform float u_gBalance;
 uniform float u_clarity, u_dehaze, u_sharpen, u_fade, u_vignette, u_grain, u_grainSize, u_seed;
 uniform float u_denoise;
-uniform float u_hasMask, u_showMask, u_maskFeather, u_clip;
+uniform float u_hasMask, u_showMask, u_maskFeather, u_clip, u_alphaFromMask;
 uniform float u_bgExposure, u_bgBlur, u_bgSaturation, u_subjExposure, u_subjClarity;
 
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
@@ -208,7 +208,9 @@ void main() {
     else if (max(c.r, max(c.g, c.b)) < 0.008) c = vec3(0.2, 0.5, 1.0);  // negro pegado
   }
 
-  o = vec4(c, 1.0);
+  // En la segunda pasada el alfa es la mascara: asi el estilo del sujeto se
+  // dibuja encima del estilo del fondo con el borde ya suavizado.
+  o = vec4(c, u_alphaFromMask > 0.5 ? m : 1.0);
 }`;
 
 function compile(gl: WebGL2RenderingContext, type: number, src: string) {
@@ -246,6 +248,17 @@ export function hueOffset(hue: number, amount: number): [number, number, number]
 }
 
 interface Target { tex: WebGLTexture; fb: WebGLFramebuffer; w: number; h: number }
+
+export interface RenderOpts {
+  /** Muestra la foto original sin ajustes. */
+  bypass?: boolean;
+  /** Muestra la máscara del sujeto en blanco y negro. */
+  showMask?: boolean;
+  /** Marca en rojo lo quemado y en azul lo pegado. */
+  clip?: boolean;
+  /** Saca la máscara por el canal alfa, para dibujar al sujeto encima del fondo. */
+  alphaFromMask?: boolean;
+}
 
 export class Renderer {
   readonly gl: WebGL2RenderingContext;
@@ -339,7 +352,8 @@ export class Renderer {
     this.gl.deleteFramebuffer(t.fb);
   }
 
-  render(adj: Adjustments, crop: CropRect, outW: number, outH: number, bypass = false, showMask = false, clip = false) {
+  render(adj: Adjustments, crop: CropRect, outW: number, outH: number, opts: RenderOpts = {}) {
+    const { bypass = false, showMask = false, clip = false, alphaFromMask = false } = opts;
     const gl = this.gl;
     if (!this.src || !this.a || !this.b) return;
     if (this.canvas.width !== outW) this.canvas.width = outW;
@@ -383,6 +397,7 @@ export class Renderer {
     gl.uniform1f(m.u('u_hasMask'), this.mask ? 1 : 0);
     gl.uniform1f(m.u('u_showMask'), showMask ? 1 : 0);
     gl.uniform1f(m.u('u_clip'), clip ? 1 : 0);
+    gl.uniform1f(m.u('u_alphaFromMask'), alphaFromMask ? 1 : 0);
     gl.uniform2f(m.u('u_srcSize'), this.srcW, this.srcH);
     gl.uniform2f(m.u('u_outSize'), outW, outH);
     gl.uniform2f(m.u('u_cropCenter'), crop.cx, crop.cy);
@@ -424,6 +439,21 @@ export class Renderer {
     gl.uniform1fv(m.u('u_hslL'), HSL_COLORS.map((c) => adj[`hsl_${c.id}_l`] / 100));
     gl.uniform1fv(m.u('u_hslC'), HSL_COLORS.map((c) => c.hue));
     draw();
+  }
+
+  /**
+   * Dibuja el fondo con un estilo y, encima, al sujeto con otro.
+   * Si no hay estilo de sujeto o no hay máscara, es una sola pasada como siempre.
+   */
+  renderSplit(bgAdj: Adjustments, subjAdj: Adjustments | null, crop: CropRect, outW: number, outH: number, opts: RenderOpts = {}) {
+    this.render(bgAdj, crop, outW, outH, opts);
+    if (!subjAdj || !this.mask || opts.bypass || opts.showMask) return;
+    const gl = this.gl;
+    gl.enable(gl.BLEND);
+    // El alfa del destino se queda en 1 para que el lienzo no quede translúcido.
+    gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    this.render(subjAdj, crop, outW, outH, { ...opts, alphaFromMask: true });
+    gl.disable(gl.BLEND);
   }
 
   /** Libera la memoria de la GPU. loseContext solo para canvas temporales (exportación). */

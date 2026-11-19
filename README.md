@@ -9,8 +9,10 @@ dos personajes de IA:
 ## Qué hace
 
 - **Abrir de la galería**: carga la foto original (incluidas las de modo Pro) y lee ISO, velocidad, apertura y lente.
-- **Cámara Studio**: visor en vivo (1080p) con el estilo aplicado, cuadrícula de tercios, nivel de horizonte, medidor de pulso firme y consejos de las gemelas antes de disparar.
+- **Cómo tomar cada estilo**: la ficha de modo Pro de cada estilo (luz, RAW, ISO, velocidad, WB en Kelvin, EV, enfoque, encuadre y un truco), para que la foto salga bien desde la cámara y no dependa de la edición ni de la IA.
 - **Separar sujeto del fondo**: un modelo de IA que corre dentro del teléfono (sin internet) recorta a las personas, para ajustar la luz, el color y el desenfoque del fondo sin tocar al sujeto.
+- **Un estilo para el fondo y otro para la persona**: por ejemplo fondo *Caballero de la Noche* y persona *Calle B/N*. Se dibuja en dos capas con el borde de la máscara suavizado.
+- **Centrar en la persona**: recorta y encuadra sobre el sujeto usando la máscara, sin pedirle nada a la IA de internet.
 - **Reducir ruido**: limpia las manchas de color de las sombras cuando disparas con ISO alto. El Auto Pro lo ajusta solo según el ISO de la foto.
 - **Auto Pro**: analiza la exposición, el balance de blancos y el contraste, y corrige como lo haría un fotógrafo.
 - **Estilos**: Caballero de la Noche (estilo Nolan), City Pop, Candy, Neón Nocturno, Concreto, Hora Dorada (teal & orange), Calle B/N y los estilos que tú guardes.
@@ -38,7 +40,8 @@ dos personajes de IA:
   teléfono: guarda el DNG y un JPG al lado, y la app abre ese JPG.
 - **Abrir la cámara del teléfono en modo Pro.** Android no permite pedirle a otra app de cámara que
   arranque en un modo concreto ni con ciertos parámetros, así que ese botón se quitó: dispara en Pro
-  desde la cámara del teléfono y abre la foto con "Abrir de la galería".
+  desde la cámara del teléfono y abre la foto con "Abrir de la galería". La pantalla
+  "Cómo tomar cada estilo" te da los valores que hay que poner a mano.
 - **Abrir archivos DNG o HEIC.** Expórtalos antes como JPG desde la galería.
 
 ## Desarrollo
@@ -59,3 +62,4 @@ Código principal:
 - `src/engine/segment.ts`: separación del sujeto (MediaPipe, modelo en `public/mp/`).
 - `src/ai/twins.ts`: los nombres y personalidades de las gemelas (cámbialos aquí).
 - `src/ai/vision.ts`: los prompts y la conexión con Gemini o Groq.
+- `src/engine/presets.ts`: estilos, recetas de edición y fichas de disparo (`shoot`).

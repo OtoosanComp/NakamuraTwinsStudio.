@@ -294,3 +294,17 @@ input[type='range']::-moz-range-thumb { width: 18px; height: 18px; border-radius
 .steady.mid { color: #ffd479; }
 .steady.bad { color: #ff7a7a; }
 .camera-top { gap: 6px; }
+
+/* Guía de parámetros por estilo */
+table.shoot { width: 100%; border-collapse: collapse; font-size: 0.88em; }
+table.shoot th {
+  text-align: left; vertical-align: top; color: var(--muted); font-weight: 600;
+  padding: 7px 10px 7px 0; width: 38%; border-top: 1px solid var(--line);
+}
+table.shoot td { padding: 7px 0; border-top: 1px solid var(--line); line-height: 1.35; }
+table.shoot tr:first-child th, table.shoot tr:first-child td { border-top: 0; }
+.lesson-inline { background: var(--bg2); border-radius: 10px; padding: 9px 12px; font-size: 0.88em; }
+ul.basics { margin: 0; padding-left: 18px; font-size: 0.88em; }
+ul.basics li { margin: 7px 0; line-height: 1.4; }
+.section-title { font-weight: 700; font-size: 0.9em; margin: 12px 0 2px; }
+.panel .row { gap: 8px; flex-wrap: wrap; }
