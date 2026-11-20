@@ -1,9 +1,10 @@
 // Separa a las personas del fondo con un modelo que corre dentro del teléfono (MediaPipe).
 // No manda nada a internet: el modelo y su motor van dentro del APK.
 import { FilesetResolver, ImageSegmenter } from '@mediapipe/tasks-vision';
+import { guidedFilter } from './guided';
 
 /** Lado máximo de la máscara. El modelo trabaja a 256 px, así que más resolución no aporta. */
-const MASK_MAX = 512;
+const MASK_MAX = 1024;
 
 let segmenter: ImageSegmenter | null = null;
 let loading: Promise<ImageSegmenter> | null = null;
@@ -79,8 +80,36 @@ export async function personMask(source: ImageBitmap | HTMLCanvasElement): Promi
     throw new Error('No encontré personas en esta foto.');
   }
 
-  const w = mask.width, h = mask.height;
-  const values = mask.getAsFloat32Array();
+  const w0 = mask.width, h0 = mask.height;
+  const raw = mask.getAsFloat32Array();
+
+  // Reajustamos la máscara con los bordes de la foto. A tamaño completo sería
+  // lento y no aporta: el modelo no tiene ese detalle. 1024 px basta para el pelo.
+  const rk = Math.min(1, 1024 / Math.max(w0, h0));
+  const w = Math.max(1, Math.round(w0 * rk));
+  const h = Math.max(1, Math.round(h0 * rk));
+
+  const gcv = document.createElement('canvas');
+  gcv.width = w; gcv.height = h;
+  const gctx = gcv.getContext('2d', { willReadFrequently: true })!;
+  gctx.drawImage(input, 0, 0, w, h);
+  const gpx = gctx.getImageData(0, 0, w, h).data;
+  const guide = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    guide[i] = (0.2126 * gpx[i * 4] + 0.7152 * gpx[i * 4 + 1] + 0.0722 * gpx[i * 4 + 2]) / 255;
+  }
+
+  const coarse = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    const sy = Math.min(h0 - 1, Math.round(y / rk));
+    for (let x = 0; x < w; x++) {
+      coarse[y * w + x] = raw[sy * w0 + Math.min(w0 - 1, Math.round(x / rk))];
+    }
+  }
+
+  const radius = Math.max(4, Math.round(Math.max(w, h) / 90));
+  const values = guidedFilter(guide, coarse, w, h, radius, 1e-4);
+  gcv.width = gcv.height = 1;
   const full = document.createElement('canvas');
   full.width = w; full.height = h;
   const ctx = full.getContext('2d')!;

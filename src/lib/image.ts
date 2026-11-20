@@ -1,6 +1,7 @@
 // Carga de fotos (con datos EXIF) y exportación en alta resolución.
 import { resolveCrop, type Adjustments, type CropState } from '../engine/adjustments';
 import { Renderer } from '../engine/renderer';
+import { buildEraseFill, WORK_EXPORT, type EraseStroke } from '../engine/eraseFill';
 
 export interface ExifInfo {
   model?: string;
@@ -192,9 +193,13 @@ export interface ExportExtras {
   subjAdj?: Adjustments | null;
   /** Lienzo del pincel manual. */
   brush?: TexImageSource | null;
+  /** Lienzo de aclarar y quemar. */
+  dodge?: TexImageSource | null;
   /** Tabla de la curva de tonos. */
   curve?: Uint8Array | null;
-  /** Objetos tapados. */
+  /** Lo que se borró con relleno según contenido. Se recalcula aquí a mayor resolución. */
+  erase?: EraseStroke[];
+  /** Sello de clonar. */
   heal?: { x: number; y: number; r: number; dx: number; dy: number; fix: [number, number, number] }[];
   /** Lado máximo del archivo final. */
   limit?: number;
@@ -208,7 +213,7 @@ export async function exportJpeg(
   crop: CropState,
   extras: ExportExtras = {},
 ): Promise<Blob> {
-  const { mask, subjAdj, brush, curve, heal, limit = EXPORT_MAX, quality = 0.95 } = extras;
+  const { mask, subjAdj, brush, dodge, curve, heal, erase, limit = EXPORT_MAX, quality = 0.95 } = extras;
   const canvas = document.createElement('canvas');
   const r = new Renderer(canvas);
   try {
@@ -218,8 +223,11 @@ export async function exportJpeg(
     r.setSource(bmp, bmp.width, bmp.height);
     r.setMask(mask?.canvas ?? null);
     r.setBrush(brush ?? null);
+    r.setDodge(dodge ?? null);
     r.setCurve(curve ?? null);
     r.setHeal(heal ?? []);
+    // El relleno se resuelve otra vez sobre la foto grande, para que no salga blando
+    r.setFill(erase?.length ? buildEraseFill(bmp, bmp.width, bmp.height, erase, WORK_EXPORT) : null);
     const { rect, w, h } = outputSize(crop, bmp.width, bmp.height, maxSide);
     r.renderSplit(adj, subjAdj ?? null, rect, w, h);
     bmp.close();

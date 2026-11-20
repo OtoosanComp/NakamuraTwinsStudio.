@@ -341,3 +341,7 @@ ul.basics li { margin: 7px 0; line-height: 1.4; }
 .editor.full .topbar:active, .editor.full .tabs:active { opacity: 1; }
 .editor.full .learn { bottom: calc(44vh + 70px); }
 .editor.full .busy { z-index: 30; }
+
+/* Marca de lo que se va a borrar */
+.erase-overlay { position: absolute; inset: 0; pointer-events: none; }
+.erase-overlay ellipse { fill: rgba(255, 93, 143, 0.35); stroke: rgba(255, 255, 255, 0.5); stroke-width: 0.2; }

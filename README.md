@@ -10,7 +10,7 @@ dos personajes de IA:
 
 - **Abrir de la galería**: carga la foto original (incluidas las de modo Pro) y lee ISO, velocidad, apertura y lente.
 - **Cómo tomar cada estilo**: la ficha de modo Pro de cada estilo (luz, RAW, ISO, velocidad, WB en Kelvin, EV, enfoque, encuadre y un truco), para que la foto salga bien desde la cámara y no dependa de la edición ni de la IA.
-- **Separar sujeto del fondo**: un modelo de IA que corre dentro del teléfono (sin internet) recorta a las personas, para ajustar la luz, el color y el desenfoque del fondo sin tocar al sujeto.
+- **Separar sujeto del fondo**: un modelo de IA que corre dentro del teléfono (sin internet) recorta a las personas, y un filtro guiado reajusta la máscara con los bordes reales de la foto para que siga el pelo y los props, para ajustar la luz, el color y el desenfoque del fondo sin tocar al sujeto.
 - **Un estilo para el fondo y otro para la persona**: por ejemplo fondo *Caballero de la Noche* y persona *Calle B/N*. Se dibuja en dos capas con el borde de la máscara suavizado.
 - **Centrar en la persona**: recorta y encuadra sobre el sujeto usando la máscara, sin pedirle nada a la IA de internet.
 - **Reducir ruido**: limpia las manchas de color de las sombras cuando disparas con ISO alto. El Auto Pro lo ajusta solo según el ISO de la foto.
@@ -20,7 +20,9 @@ dos personajes de IA:
 - **Recorte con los dedos**: pellizca para acercar (hasta 6×), arrastra para mover y doble toque para acercar de golpe al punto que tocaste. Formatos fijos (1:1, 4:5, 9:16, 2.39:1…), enderezado y aviso de con cuántos píxeles te quedas.
 - **Aprende mientras editas**: cada control explica qué hace al moverlo. Toca el nombre para ver la explicación y dale doble toque para restablecerlo.
 - **Gemelas (Gemini o Groq)**: califican la foto, dan consejos de encuadre y color, sugieren estilo, recorte y ajustes, y dejan una lección.
-- **Quitar objetos**: pintas encima de lo que estorba y la app busca alrededor un pedazo parecido para taparlo (hasta 20 por foto).
+- **Borrar objetos (relleno según contenido)**: PatchMatch multiescala busca en toda la foto los trozos que encajan y reconstruye el fondo, incluso patrones. Termina con fusión por gradientes (Poisson) para que el borde no se note. Medido: conserva 92-101% de la textura del fondo.
+- **Sello de clonar**: tú eliges de dónde copiar, para cuando el automático se equivoca.
+- **Aclarar y quemar**: exposición pintada a mano, respetando lo que ya está quemado o pegado.
 - **Pincel manual**: corrige a mano lo que la IA dejó fuera del recorte del sujeto (pelucas, props, alas).
 - **Curva de tonos**: cinco puntos que se arrastran, con interpolación monótona para que no aparezcan halos.
 - **Aplicar a más fotos**: el mismo estilo y ajustes a toda una sesión, guardando cada una en la galería.
@@ -67,6 +69,9 @@ Código principal:
 - `src/engine/analyze.ts`: el Auto Pro.
 - `src/engine/adjustments.ts`: los controles y sus explicaciones.
 - `src/engine/segment.ts`: separación del sujeto (MediaPipe, modelo en `public/mp/`).
+- `src/engine/guided.ts`: filtro guiado que afina la máscara con los bordes de la foto.
+- `src/engine/inpaint.ts`: PatchMatch multiescala + fusión por gradientes.
+- `src/engine/eraseFill.ts`: arma el hueco y devuelve la capa de relleno.
 - `src/ai/twins.ts`: los nombres y personalidades de las gemelas (cámbialos aquí).
 - `src/ai/vision.ts`: los prompts y la conexión con Gemini o Groq.
 - `src/engine/presets.ts`: estilos, recetas de edición y fichas de disparo (`shoot`).

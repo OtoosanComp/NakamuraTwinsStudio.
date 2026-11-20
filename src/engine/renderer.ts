@@ -34,7 +34,7 @@ void main() {
 const MAIN = `#version 300 es
 precision highp float;
 in vec2 v_uv; out vec4 o;
-uniform sampler2D u_src, u_blur, u_mask, u_curve, u_brush;
+uniform sampler2D u_src, u_blur, u_mask, u_curve, u_brush, u_fill, u_dodge;
 uniform vec2 u_srcSize, u_outSize, u_cropCenter, u_cropSize;
 uniform float u_angle, u_bypass;
 uniform float u_exposure, u_contrast, u_highlights, u_shadows, u_whites, u_blacks;
@@ -44,7 +44,7 @@ uniform vec3 u_gS, u_gM, u_gH;
 uniform float u_gBalance;
 uniform float u_clarity, u_dehaze, u_sharpen, u_fade, u_vignette, u_grain, u_grainSize, u_seed;
 uniform float u_denoise;
-uniform float u_hasMask, u_showMask, u_maskFeather, u_clip, u_alphaFromMask, u_bicubic, u_hasCurve, u_hasBrush;
+uniform float u_hasMask, u_showMask, u_maskFeather, u_clip, u_alphaFromMask, u_bicubic, u_hasCurve, u_hasBrush, u_hasFill, u_hasDodge;
 uniform int u_healCount;
 uniform vec4 u_healA[20];  // xy = centro, z = radio (fraccion del ancho)
 uniform vec4 u_healB[20];  // xy = de donde se copia
@@ -127,7 +127,13 @@ void main() {
   vec3 c = sampleSrc(uv, lod);
   if (u_bypass > 0.5) { o = vec4(c, 1.0); return; }
 
-  // --- Objetos quitados: se tapan antes que nada, para que reciban los mismos ajustes ---
+  // --- Relleno según contenido: va primero, para que reciba los mismos ajustes ---
+  if (u_hasFill > 0.5) {
+    vec4 f = texture(u_fill, uv);
+    c = mix(c, f.rgb, f.a);
+  }
+
+  // --- Sello de clonar: copia de donde tú marcaste ---
   for (int i = 0; i < 20; i++) {
     if (i >= u_healCount) break;
     float rad = u_healA[i].z * u_srcSize.x;
@@ -192,6 +198,18 @@ void main() {
   float Ln = L + u_highlights * 0.28 * hm + u_shadows * 0.32 * sm * sm;
   vec3 ratio = c / max(L, 0.001);
   c += (Ln - L) * mix(vec3(1.0), ratio, 0.6);
+
+  // --- Aclarar y quemar: exposición pintada a mano, cuidando luces y sombras ---
+  if (u_hasDodge > 0.5) {
+    float dv = texture(u_dodge, uv).r * 2.0 - 1.0;
+    if (abs(dv) > 0.004) {
+      float dl = clamp(luma(c), 0.0, 1.0);
+      // Donde ya no queda margen (blanco quemado o negro pegado) el efecto se apaga
+      float room = dv > 0.0 ? (1.0 - dl) : dl;
+      vec3 dlin = pow(max(c, 0.0), vec3(2.2)) * exp2(dv * 1.1 * room);
+      c = pow(dlin, vec3(1.0 / 2.2));
+    }
+  }
 
   // --- Claridad (contraste local en medios tonos) ---
   L = clamp(luma(c), 0.0, 1.0);
@@ -326,23 +344,45 @@ export interface RenderOpts {
 export class Renderer {
   readonly gl: WebGL2RenderingContext;
   readonly maxTexture: number;
-  private main; private down; private blur;
+  private main!: ReturnType<typeof program>;
+  private down!: ReturnType<typeof program>;
+  private blur!: ReturnType<typeof program>;
   private src: WebGLTexture | null = null;
   private mask: WebGLTexture | null = null;
   private curve: WebGLTexture | null = null;
   private brush: WebGLTexture | null = null;
+  private fill: WebGLTexture | null = null;
+  private dodge: WebGLTexture | null = null;
   private heal: { a: Float32Array; b: Float32Array; c: Float32Array; n: number } = { a: new Float32Array(80), b: new Float32Array(80), c: new Float32Array(80), n: 0 };
   private srcW = 0; private srcH = 0;
   private a: Target | null = null; private b: Target | null = null;
   private seed = Math.random() * 100;
   private mipmapped = true;
 
-  constructor(readonly canvas: HTMLCanvasElement, readable = true) {
+  /**
+   * Android libera la memoria de video cuando la app se va al fondo. Al volver,
+   * todo lo que teníamos en la GPU ya no existe y la foto se queda en negro.
+   * Aquí lo detectamos, reconstruimos los programas y avisamos para resubir todo.
+   */
+  private lost = false;
+  private onRestore?: () => void;
+
+  constructor(readonly canvas: HTMLCanvasElement, readable = true, onRestore?: () => void) {
     // readable=false (camara en vivo) evita que el driver conserve el buffer: mas fps en el telefono
     const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: readable, antialias: false, premultipliedAlpha: false });
     if (!gl) throw new Error('Tu dispositivo no soporta WebGL2.');
     this.gl = gl;
+    this.onRestore = onRestore;
     this.maxTexture = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number;
+    this.buildGl();
+
+    canvas.addEventListener('webglcontextlost', this.handleLost);
+    canvas.addEventListener('webglcontextrestored', this.handleRestored);
+  }
+
+  /** Crea los programas y el cuadrado sobre el que se dibuja todo. */
+  private buildGl() {
+    const gl = this.gl;
     this.main = program(gl, MAIN);
     this.down = program(gl, DOWNSAMPLE);
     this.blur = program(gl, BLUR);
@@ -352,6 +392,29 @@ export class Renderer {
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
   }
+
+  private handleLost = (e: Event) => {
+    // Sin preventDefault el navegador no se molesta en devolvernos el contexto
+    e.preventDefault();
+    this.lost = true;
+  };
+
+  private handleRestored = () => {
+    // Todo lo que vivía en la GPU se perdió: empezamos de cero
+    this.src = null; this.mask = null; this.curve = null; this.brush = null; this.fill = null; this.dodge = null;
+    this.a = null; this.b = null;
+    this.srcW = 0; this.srcH = 0;
+    try {
+      this.buildGl();
+      this.lost = false;
+      this.onRestore?.();
+    } catch {
+      this.lost = true;
+    }
+  };
+
+  /** true mientras la GPU no tenga nada nuestro: dibujar sería pintar negro. */
+  get isLost() { return this.lost; }
 
   get sourceSize() { return { w: this.srcW, h: this.srcH }; }
 
@@ -383,6 +446,8 @@ export class Renderer {
       if (this.mask) gl.deleteTexture(this.mask);
     if (this.curve) gl.deleteTexture(this.curve);
     if (this.brush) gl.deleteTexture(this.brush);
+    if (this.fill) gl.deleteTexture(this.fill);
+    if (this.dodge) gl.deleteTexture(this.dodge);
       this.mask = null;
       return;
     }
@@ -403,12 +468,52 @@ export class Renderer {
     const gl = this.gl;
     if (!img) {
       if (this.brush) gl.deleteTexture(this.brush);
+    if (this.fill) gl.deleteTexture(this.fill);
+    if (this.dodge) gl.deleteTexture(this.dodge);
       this.brush = null;
       return;
     }
     if (!this.brush) this.brush = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.brush);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  }
+
+  /** Aclarar y quemar: gris 0.5 no toca nada, blanco aclara y negro oscurece. */
+  setDodge(img: TexImageSource | null) {
+    const gl = this.gl;
+    if (!img) {
+      if (this.dodge) gl.deleteTexture(this.dodge);
+      this.dodge = null;
+      return;
+    }
+    if (!this.dodge) this.dodge = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.dodge);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  }
+
+  /** Relleno según contenido ya calculado: RGB el parche, alfa dónde se aplica. */
+  setFill(img: TexImageSource | null) {
+    const gl = this.gl;
+    if (!img) {
+      if (this.fill) gl.deleteTexture(this.fill);
+    if (this.dodge) gl.deleteTexture(this.dodge);
+      this.fill = null;
+      return;
+    }
+    if (!this.fill) this.fill = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.fill);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
@@ -434,6 +539,8 @@ export class Renderer {
     if (!lut) {
       if (this.curve) gl.deleteTexture(this.curve);
     if (this.brush) gl.deleteTexture(this.brush);
+    if (this.fill) gl.deleteTexture(this.fill);
+    if (this.dodge) gl.deleteTexture(this.dodge);
       this.curve = null;
       return;
     }
@@ -470,6 +577,7 @@ export class Renderer {
   }
 
   render(adj: Adjustments, crop: CropRect, outW: number, outH: number, opts: RenderOpts = {}) {
+    if (this.lost) return;
     const { bypass = false, showMask = false, clip = false, alphaFromMask = false } = opts;
     const gl = this.gl;
     if (!this.src || !this.a || !this.b) return;
@@ -520,6 +628,14 @@ export class Renderer {
     gl.bindTexture(gl.TEXTURE_2D, this.brush);
     gl.uniform1i(m.u('u_brush'), 4);
     gl.uniform1f(m.u('u_hasBrush'), this.brush ? 1 : 0);
+    gl.activeTexture(gl.TEXTURE5);
+    gl.bindTexture(gl.TEXTURE_2D, this.fill);
+    gl.uniform1i(m.u('u_fill'), 5);
+    gl.uniform1f(m.u('u_hasFill'), this.fill ? 1 : 0);
+    gl.activeTexture(gl.TEXTURE6);
+    gl.bindTexture(gl.TEXTURE_2D, this.dodge);
+    gl.uniform1i(m.u('u_dodge'), 6);
+    gl.uniform1f(m.u('u_hasDodge'), this.dodge ? 1 : 0);
     gl.uniform1i(m.u('u_healCount'), this.heal.n);
     if (this.heal.n > 0) {
       gl.uniform4fv(m.u('u_healA'), this.heal.a);
@@ -592,12 +708,16 @@ export class Renderer {
   /** Libera la memoria de la GPU. loseContext solo para canvas temporales (exportación). */
   dispose(loseContext = false) {
     const gl = this.gl;
+    this.canvas.removeEventListener('webglcontextlost', this.handleLost);
+    this.canvas.removeEventListener('webglcontextrestored', this.handleRestored);
     if (this.src) gl.deleteTexture(this.src);
     if (this.mask) gl.deleteTexture(this.mask);
     if (this.curve) gl.deleteTexture(this.curve);
     if (this.brush) gl.deleteTexture(this.brush);
+    if (this.fill) gl.deleteTexture(this.fill);
+    if (this.dodge) gl.deleteTexture(this.dodge);
     this.freeTarget(this.a); this.freeTarget(this.b);
-    this.src = null; this.mask = null; this.curve = null; this.brush = null; this.a = null; this.b = null;
+    this.src = null; this.mask = null; this.curve = null; this.brush = null; this.fill = null; this.dodge = null; this.a = null; this.b = null;
     if (loseContext) gl.getExtension('WEBGL_lose_context')?.loseContext();
   }
 }

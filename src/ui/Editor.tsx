@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft, Undo2, Redo2, Eye, Save, Download, Share2, MoreVertical, Sparkles, Sun, Palette,
-  Droplets, SlidersHorizontal, Crop, Film, Wand2, RotateCcw, Copy, ClipboardPaste, Grid3x3, Loader2, Trash2, Users, Pipette, TriangleAlert, Eraser, Plus, Minus, Maximize2, Minimize2, Images,
+  Droplets, SlidersHorizontal, Crop, Film, Wand2, RotateCcw, Copy, ClipboardPaste, Grid3x3, Loader2, Trash2, Users, Pipette, TriangleAlert, Eraser, Plus, Minus, Maximize2, Minimize2, Images, Moon,
 } from 'lucide-react';
 import {
   ASPECTS, COLOR, EFFECTS, GRADING, HSL_COLORS, LIGHT, MASK, ALL_DEFS, cropOnSubject, defaultCrop, hslDefs, neutral,
@@ -15,6 +15,7 @@ import { PRESETS, loadCustomPresets, saveCustomPresets, type Preset } from '../e
 import { personMask, type PersonMask } from '../engine/segment';
 import { buildCurveLut, CURVE_IDENTITY, isIdentityCurve } from '../engine/curve';
 import { findHealSource, regroupHeal, HEAL_MAX } from '../engine/heal';
+import { buildEraseFill } from '../engine/eraseFill';
 import type { BrushStroke } from '../engine/editState';
 import { Renderer } from '../engine/renderer';
 import {
@@ -97,13 +98,24 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
   const lastTap = useRef({ t: 0, x: 0, y: 0 });
   const [picking, setPicking] = useState(false);
   /** 'off' = los dedos encuadran; si no, el dedo pinta. */
-  const [paint, setPaint] = useState<'off' | 'add' | 'sub' | 'heal'>('off');
+  const [paint, setPaint] = useState<'off' | 'add' | 'sub' | 'heal' | 'erase' | 'clonar' | 'dodge' | 'burn'>('off');
   const [brushSize, setBrushSize] = useState(0.07);
   const painting = useRef(false);
   const lastPaint = useRef<{ x: number; y: number } | null>(null);
   /** Dónde empezó el trazo actual dentro de edit.heal, para recalcular el origen al soltar. */
   const healGroup = useRef(0);
+  /** Origen elegido a mano para el sello de clonar. */
+  const cloneSource = useRef<{ x: number; y: number } | null>(null);
+  const [cloneSet, setCloneSet] = useState(false);
   const sampleDataRef = useRef<ImageData | null>(null);
+  /** Sube de 1 cuando hay que resubir todo a la GPU y volver a dibujar. */
+  const [gen, setGen] = useState(0);
+  const [fill, setFill] = useState<HTMLCanvasElement | null>(null);
+  const [fillBusy, setFillBusy] = useState(false);
+  /** Sube al soltar el dedo: el relleno es caro y solo debe correr una vez por trazo. */
+  const [eraseTick, setEraseTick] = useState(0);
+  const eraseRef = useRef(edit.erase);
+  eraseRef.current = edit.erase;
   const [clip, setClip] = useState(false);
   /** Pantalla completa: la foto ocupa todo y las barras quedan encima, translúcidas. */
   const [full, setFull] = useState(false);
@@ -116,9 +128,19 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
 
   const allPresets = useMemo(() => [...PRESETS, ...custom], [custom]);
   const preset = allPresets.find((p) => p.id === edit.presetId);
-  const adj = useMemo(() => composeAdjustments(edit, preset), [edit, preset]);
+  // Solo estos campos entran en los ajustes. Si dependiera de `edit` entero,
+  // cada toque del pincel volvería a dibujar toda la foto sin necesidad.
+  const adj = useMemo(
+    () => composeAdjustments(edit, preset),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [edit.autoOn, edit.auto, edit.presetId, edit.amount, edit.user, preset],
+  );
   const subjectPreset = allPresets.find((p) => p.id === edit.subjectPresetId);
-  const subjAdj = useMemo(() => composeSubject(edit, subjectPreset), [edit, subjectPreset]);
+  const subjAdj = useMemo(
+    () => composeSubject(edit, subjectPreset),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [edit.autoOn, edit.auto, edit.user, edit.maskOn, edit.subjectAmount, subjectPreset],
+  );
   const stageRef = useRef<HTMLDivElement>(null);
   const srcW = detail?.w ?? photo?.previewW ?? 1;
   const srcH = detail?.h ?? photo?.previewH ?? 1;
@@ -152,7 +174,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
   useEffect(() => {
     if (!photo || !canvasRef.current) return;
     try {
-      const r = new Renderer(canvasRef.current);
+      const r = new Renderer(canvasRef.current, true, () => setGen((g) => g + 1));
       r.setSource(detail?.bmp ?? photo.preview, srcW, srcH);
       rendererRef.current = r;
     } catch (e) {
@@ -183,9 +205,20 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     const r = rendererRef.current;
     if (!r || !photo) return;
     r.setSource(detail?.bmp ?? photo.preview, srcW, srcH);
-  }, [detail, photo, srcW, srcH]);
+  }, [detail, photo, srcW, srcH, gen]);
 
   useEffect(() => { sampleRef.current = null; sampleDataRef.current = null; }, [photo]);
+
+  // Al regresar de otra app el lienzo puede venir vacío: forzamos un redibujado.
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === 'visible') setGen((g) => g + 1); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, []);
 
 
   // ---------- Gotero de balance de blancos ----------
@@ -263,8 +296,8 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
   };
 
   // ---------- Pincel y objetos quitados ----------
-  const brushCanvas = useMemo(() => {
-    if (!edit.brush.length || !photo) return null;
+  const strokeCanvas = useCallback((strokes: BrushStroke[]) => {
+    if (!strokes.length || !photo) return null;
     const W = 512;
     const H = Math.max(1, Math.round((W * photo.previewH) / photo.previewW));
     const c = document.createElement('canvas');
@@ -272,7 +305,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     const ctx = c.getContext('2d')!;
     ctx.fillStyle = '#808080'; // gris = no toca nada
     ctx.fillRect(0, 0, W, H);
-    for (const st of edit.brush) {
+    for (const st of strokes) {
       const r = Math.max(1, st.r * W);
       const col = st.add ? '255,255,255' : '0,0,0';
       const g = ctx.createRadialGradient(st.x * W, st.y * H, 0, st.x * W, st.y * H, r);
@@ -285,20 +318,45 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
       ctx.fill();
     }
     return c;
-  }, [edit.brush, photo]);
+  }, [photo]);
 
-  useEffect(() => { rendererRef.current?.setBrush(brushCanvas); }, [brushCanvas, photo]);
-  useEffect(() => { rendererRef.current?.setHeal(edit.heal); }, [edit.heal, photo]);
+  const brushCanvas = useMemo(() => strokeCanvas(edit.brush), [strokeCanvas, edit.brush]);
+  const dodgeCanvas = useMemo(() => strokeCanvas(edit.dodge), [strokeCanvas, edit.dodge]);
+
+  useEffect(() => { rendererRef.current?.setBrush(brushCanvas); }, [brushCanvas, photo, gen]);
+  useEffect(() => { rendererRef.current?.setDodge(dodgeCanvas); }, [dodgeCanvas, photo, gen]);
+  useEffect(() => { rendererRef.current?.setHeal(edit.heal); }, [edit.heal, photo, gen]);
+  useEffect(() => { rendererRef.current?.setFill(fill); }, [fill, photo, gen]);
+
+  // El relleno según contenido es caro, así que corre una sola vez: al soltar el dedo.
+  useEffect(() => {
+    if (!photo) return;
+    const strokes = eraseRef.current;
+    if (!strokes.length) { setFill(null); setFillBusy(false); return; }
+    let alive = true;
+    setFillBusy(true);
+    const id = window.setTimeout(() => {
+      try {
+        const f = buildEraseFill(photo.preview, photo.previewW, photo.previewH, strokes);
+        if (alive) setFill(f);
+      } catch {
+        if (alive) toast('No pude rellenar esa zona. Marca un poco menos de una vez.');
+      } finally {
+        if (alive) setFillBusy(false);
+      }
+    }, 60);
+    return () => { alive = false; clearTimeout(id); };
+  }, [eraseTick, photo, toast]);
 
   // ---------- Curva de tonos ----------
   useEffect(() => {
     rendererRef.current?.setCurve(isIdentityCurve(edit.curve) ? null : buildCurveLut(edit.curve));
-  }, [edit.curve, photo]);
+  }, [edit.curve, photo, gen]);
 
   // ---------- Máscara del sujeto ----------
   useEffect(() => {
     rendererRef.current?.setMask(edit.maskOn ? mask?.canvas ?? null : null);
-  }, [mask, edit.maskOn, photo]);
+  }, [mask, edit.maskOn, photo, gen]);
 
   const runMask = useCallback(async (silent = false) => {
     if (!photo) return;
@@ -330,7 +388,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
       r.renderSplit(bypass ? neutral() : adj, subjAdj, rect, w, h, { bypass, showMask, clip });
     });
     return () => cancelAnimationFrame(id);
-  }, [adj, subjAdj, edit.crop, edit.curve, edit.heal, brushCanvas, bypass, photo, mask, showMask, clip, detail, srcW, srcH]);
+  }, [adj, subjAdj, edit.crop, edit.curve, edit.heal, fill, brushCanvas, dodgeCanvas, bypass, photo, mask, showMask, clip, detail, srcW, srcH, gen]);
 
   // ---------- Histograma de la foto editada ----------
   useEffect(() => {
@@ -454,16 +512,23 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     const x = pt.x / srcW, y = pt.y / srcH;
     // Separamos los toques para no acumular miles
     const last = lastPaint.current;
-    const gap = paint === 'heal' ? brushSize * 1.2 : brushSize * 0.35;
+    const gap = paint === 'heal' || paint === 'clonar' ? brushSize * 1.2 : brushSize * 0.35;
     if (last && Math.hypot(x - last.x, (y - last.y) * (srcH / srcW)) < gap) return;
     lastPaint.current = { x, y };
 
-    if (paint === 'heal') {
-      if (edit.heal.length >= HEAL_MAX) { toast(`Máximo ${HEAL_MAX} objetos por foto.`); return; }
+    if (paint === 'erase') {
+      setEdit((st) => ({ ...st, erase: [...st.erase, { x, y, r: brushSize }] }));
+    } else if (paint === 'clonar' || paint === 'heal') {
+      if (edit.heal.length >= HEAL_MAX) { toast(`Máximo ${HEAL_MAX} toques de sello por foto.`); return; }
       const data = sampleData();
       if (!data) return;
-      const stroke = findHealSource(data, x, y, brushSize);
+      const stroke = cloneSource.current
+        ? { x, y, r: brushSize, dx: cloneSource.current.x - x, dy: cloneSource.current.y - y, fix: [0, 0, 0] as [number, number, number] }
+        : findHealSource(data, x, y, brushSize);
       setEdit((st) => ({ ...st, heal: [...st.heal, stroke] }));
+    } else if (paint === 'dodge' || paint === 'burn') {
+      const stroke: BrushStroke = { x, y, r: brushSize, add: paint === 'dodge' };
+      setEdit((st) => ({ ...st, dodge: [...st.dodge, stroke] }));
     } else {
       const stroke: BrushStroke = { x, y, r: brushSize, add: paint === 'add' };
       setEdit((st) => ({ ...st, brush: [...st.brush, stroke], maskOn: true }));
@@ -473,6 +538,20 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
   const onPointerDown = (e: React.PointerEvent) => {
     if (picking) { pickWhiteBalance(e.clientX, e.clientY); return; }
     if (!photo) return;
+    // En el sello de clonar, el primer toque marca de dónde copiar
+    if (paint === 'clonar' && !cloneSet) {
+      const pt = imagePointAt(e.clientX, e.clientY);
+      if (pt) {
+        cloneSource.current = { x: pt.x / srcW, y: pt.y / srcH };
+        setCloneSet(true);
+        showLearn({
+          title: 'Origen marcado',
+          body: 'De aquí se va a copiar. Ahora pinta encima de lo que quieres tapar.',
+          tip: 'Elige un pedazo con la misma luz y textura que el lugar a tapar.',
+        });
+      }
+      return;
+    }
     (e.target as Element).setPointerCapture(e.pointerId);
 
     if (paint !== 'off') {
@@ -552,6 +631,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
         });
       }
     }
+    if (painting.current && paint === 'erase') setEraseTick((t) => t + 1);
     painting.current = false;
     lastPaint.current = null;
     pushHistory(dragStart.current);
@@ -589,8 +669,10 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
         mask: edit.maskOn ? mask : null,
         subjAdj,
         brush: edit.maskOn ? brushCanvas : null,
+        dodge: dodgeCanvas,
         curve: isIdentityCurve(edit.curve) ? null : buildCurveLut(edit.curve),
         heal: edit.heal,
+        erase: edit.erase,
         limit,
       });
       if (mode === 'gallery') {
@@ -867,7 +949,39 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
           </div>
         );
       case 'efectos':
-        return <div className="panel">{EFFECTS.map((d) => sliderFor(d))}</div>;
+        return (
+          <div className="panel">
+            <p className="section-title">Aclarar y quemar</p>
+            <p className="muted small">
+              Pinta luz donde quieras volumen y sombra donde quieras peso: en el pómulo, en el traje,
+              en el fondo. Respeta lo que ya está quemado o pegado, así que no arruina el detalle.
+            </p>
+            <div className="row">
+              <button className={`btn small ${paint === 'dodge' ? 'primary' : ''}`}
+                onClick={() => { setPaint(paint === 'dodge' ? 'off' : 'dodge'); setPicking(false); }}>
+                <Sun size={14} /> Aclarar
+              </button>
+              <button className={`btn small ${paint === 'burn' ? 'primary' : ''}`}
+                onClick={() => { setPaint(paint === 'burn' ? 'off' : 'burn'); setPicking(false); }}>
+                <Moon size={14} /> Quemar
+              </button>
+              <button className="btn ghost small" disabled={!edit.dodge.length}
+                onClick={() => apply((st) => ({ ...st, dodge: [] }))}>
+                <RotateCcw size={14} /> Limpiar
+              </button>
+            </div>
+            {(paint === 'dodge' || paint === 'burn') && (
+              <Slider
+                def={{ key: 'contrast', label: 'Tamaño del pincel', min: 2, max: 25, step: 0.5, what: 'Qué tan grande es el círculo que pintas.', up: 'Más grande.', down: 'Más chico.' }}
+                value={brushSize * 100}
+                format={(v) => `${v.toFixed(1)}%`}
+                onChange={(v) => setBrushSize(v / 100)}
+              />
+            )}
+            <p className="section-title">Efectos</p>
+            {EFFECTS.map((d) => sliderFor(d))}
+          </div>
+        );
       case 'sujeto':
         return (
           <div className="panel">
@@ -980,35 +1094,65 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
       case 'quitar':
         return (
           <div className="panel">
-            <p className="muted small">
-              <b>Pinta encima de todo el objeto</b> (botes, sillas, letreros, cables) de una sola pasada,
-              sin levantar el dedo. Al soltar, la app busca alrededor un pedazo parecido y lo copia encima.
-              Funciona muy bien sobre fondo parejo; encima de una cara o de un patrón marcado se nota.
-            </p>
-            <button
-              className={`btn wide ${paint === 'heal' ? 'primary' : ''}`}
-              onClick={() => { setPaint(paint === 'heal' ? 'off' : 'heal'); setPicking(false); }}
-            >
-              <Eraser size={16} /> {paint === 'heal' ? 'Tocando para quitar… (toca aquí para terminar)' : 'Quitar objetos'}
-            </button>
-            {paint === 'heal' && <p className="muted small">Con dos dedos puedes acercarte sin salir del modo.</p>}
-              <Slider
-                def={{ key: 'contrast', label: 'Tamaño del pincel', min: 2, max: 25, step: 0.5, what: 'Qué tan grande es el círculo que pintas con el dedo.', up: 'Más grande: avanzas rápido.', down: 'Más chico: para detalles como el pelo.' }}
-                value={brushSize * 100}
-                format={(v) => `${v.toFixed(1)}%`}
-                onChange={(v) => setBrushSize(v / 100)}
-              />
-            <p className="out-size">{edit.heal.length} de {HEAL_MAX} objetos quitados</p>
-            <div className="row">
-              <button className="btn ghost small" disabled={!edit.heal.length}
-                onClick={() => apply((st) => ({ ...st, heal: st.heal.slice(0, -1) }))}>
-                <Undo2 size={14} /> Quitar el último
+            <div className="chips">
+              <button className={`chip ${paint !== 'clonar' ? 'active' : ''}`}
+                onClick={() => { setPaint('off'); setCloneSet(false); cloneSource.current = null; }}>
+                Borrar objeto
               </button>
-              <button className="btn ghost small" disabled={!edit.heal.length}
-                onClick={() => apply((st) => ({ ...st, heal: [] }))}>
-                <RotateCcw size={14} /> Empezar de nuevo
+              <button className={`chip ${paint === 'clonar' ? 'active' : ''}`}
+                onClick={() => { setPaint('clonar'); setCloneSet(false); cloneSource.current = null; setPicking(false); }}>
+                Sello de clonar
               </button>
             </div>
+
+            {paint === 'clonar' ? (
+              <>
+                <p className="muted small">
+                  Tú decides de dónde se copia. Primero toca un pedazo limpio (el origen) y luego pinta encima
+                  de lo que quieres tapar. Sirve cuando el automático se equivoca.
+                </p>
+                <p className="out-size">
+                  {cloneSet ? '✓ Origen marcado. Ahora pinta encima del objeto.' : 'Toca primero el pedazo del que quieres copiar.'}
+                </p>
+                <div className="row">
+                  <button className="btn ghost small" onClick={() => { setCloneSet(false); cloneSource.current = null; }}>
+                    <Pipette size={14} /> Cambiar el origen
+                  </button>
+                  <button className="btn ghost small" disabled={!edit.heal.length}
+                    onClick={() => apply((st) => ({ ...st, heal: [] }))}>
+                    <RotateCcw size={14} /> Limpiar sello
+                  </button>
+                </div>
+                <p className="out-size">{edit.heal.length} de {HEAL_MAX} toques de sello</p>
+              </>
+            ) : (
+              <>
+                <p className="muted small">
+                  <b>Pinta encima de todo el objeto</b> sin levantar el dedo. Al soltar, la app busca en toda la foto
+                  los pedazos que mejor encajan y reconstruye el fondo, hasta patrones como un muro de ladrillo.
+                </p>
+                <button
+                  className={`btn wide ${paint === 'erase' ? 'primary' : ''}`}
+                  onClick={() => { setPaint(paint === 'erase' ? 'off' : 'erase'); setPicking(false); }}
+                >
+                  <Eraser size={16} /> {paint === 'erase' ? 'Pintando… (toca aquí para terminar)' : 'Borrar objeto'}
+                </button>
+                {fillBusy && <p className="out-size"><Loader2 className="spin" size={12} /> Reconstruyendo el fondo…</p>}
+                {paint === 'erase' && <p className="muted small">Con dos dedos te acercas sin salir del modo.</p>}
+                <div className="row">
+                  <button className="btn ghost small" disabled={!edit.erase.length}
+                    onClick={() => { apply((st) => ({ ...st, erase: [] })); setEraseTick((t) => t + 1); }}>
+                    <RotateCcw size={14} /> Empezar de nuevo
+                  </button>
+                </div>
+              </>
+            )}
+            <Slider
+              def={{ key: 'contrast', label: 'Tamaño del pincel', min: 2, max: 25, step: 0.5, what: 'Qué tan grande es el círculo que pintas con el dedo.', up: 'Más grande: avanzas rápido.', down: 'Más chico: para detalles.' }}
+              value={brushSize * 100}
+              format={(v) => `${v.toFixed(1)}%`}
+              onChange={(v) => setBrushSize(v / 100)}
+            />
           </div>
         );
       case 'recorte':
@@ -1145,6 +1289,25 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
         <div className="canvas-wrap" style={fit}>
           <canvas ref={canvasRef} style={fit} />
           {showGrid && photo && <div className="grid-overlay"><i /><i /><i /><i /></div>}
+          {tab === 'quitar' && photo && edit.erase.length > 0 && (
+            <svg className="erase-overlay" viewBox="0 0 100 100" preserveAspectRatio="none">
+              {edit.erase.map((e, i) => {
+                const r = resolveCrop(edit.crop, srcW, srcH);
+                const cs = Math.cos(-r.angle), sn = Math.sin(-r.angle);
+                const px = e.x * srcW - r.cx, py = e.y * srcH - r.cy;
+                const qx = px * cs - py * sn, qy = px * sn + py * cs;
+                return (
+                  <ellipse
+                    key={i}
+                    cx={(qx / r.w + 0.5) * 100}
+                    cy={(qy / r.h + 0.5) * 100}
+                    rx={(e.r * srcW / r.w) * 100}
+                    ry={(e.r * srcW / r.h) * 100}
+                  />
+                );
+              })}
+            </svg>
+          )}
         </div>
         {bypass && <div className="badge">Original</div>}
       </div>

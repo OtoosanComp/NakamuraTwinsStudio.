@@ -4,6 +4,7 @@ import {
 } from './adjustments';
 import { CURVE_IDENTITY } from './curve';
 import type { HealStroke } from './heal';
+import type { EraseStroke } from './eraseFill';
 import type { Preset } from './presets';
 
 /**
@@ -25,10 +26,14 @@ export interface EditState {
   subjectAmount: number;
   /** Curva de tonos: salida en x = 0, 0.25, 0.5, 0.75 y 1. */
   curve: number[];
-  /** Objetos tapados. */
+  /** Objetos borrados con relleno según contenido. */
+  erase: EraseStroke[];
+  /** Sello de clonar: copias de donde tú marcaste. */
   heal: HealStroke[];
   /** Trazos del pincel que corrigen la máscara a mano. */
   brush: BrushStroke[];
+  /** Aclarar y quemar: add = aclarar. */
+  dodge: BrushStroke[];
 }
 
 export interface BrushStroke {
@@ -44,7 +49,7 @@ export function initialEdit(): EditState {
   return {
     autoOn: true, auto: {}, presetId: null, amount: 1, user: {},
     crop: defaultCrop(), maskOn: false, subjectPresetId: null, subjectAmount: 1,
-    curve: [...CURVE_IDENTITY], heal: [], brush: [],
+    curve: [...CURVE_IDENTITY], erase: [], heal: [], brush: [], dodge: [],
   };
 }
 
