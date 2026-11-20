@@ -145,6 +145,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     [edit.autoOn, edit.auto, edit.user, edit.maskOn, edit.subjectAmount, subjectPreset],
   );
   const stageRef = useRef<HTMLDivElement>(null);
+  const tabsRef = useRef<HTMLElement>(null);
   const srcW = detail?.w ?? photo?.previewW ?? 1;
   const srcH = detail?.h ?? photo?.previewH ?? 1;
   const outAspect = useMemo(() => {
@@ -211,6 +212,12 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
   }, [detail, photo, srcW, srcH, gen]);
 
   useEffect(() => { sampleRef.current = null; sampleDataRef.current = null; }, [photo]);
+
+  // Con 11 pestañas no caben todas: traemos la activa a la vista al cambiarla.
+  useEffect(() => {
+    const el = tabsRef.current?.querySelector('button.active');
+    el?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+  }, [tab]);
 
   // Al regresar de otra app el lienzo puede venir vacío: forzamos un redibujado.
   useEffect(() => {
@@ -1446,7 +1453,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
 
       {!(full && panelHidden) && <section className="controls">{panel()}</section>}
 
-      <nav className="tabs">
+      <nav className="tabs" ref={tabsRef}>
         {TABS.map((t) => (
           <button
             key={t.id}

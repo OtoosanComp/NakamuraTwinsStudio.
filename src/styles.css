@@ -759,3 +759,35 @@ ul.basics li { margin: 9px 0; }
   .tabs button { flex-basis: 58px; min-width: 58px; }
   .thumbs { gap: 6px; }
 }
+
+
+/* ==========================================================
+   AJUSTES DE INTEGRACION
+   Detalles detectados al probar la capa visual en la app real.
+   Si ChatGPT entrega otra version del archivo, conserva este bloque al final.
+   ========================================================== */
+
+/* Con 11 pestanas de 62 px solo caben 6 en pantalla y nada avisaba que
+   hubiera mas. El difuminado en los bordes deja ver que la barra sigue. */
+.tabs {
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 16px, #000 calc(100% - 26px), transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 16px, #000 calc(100% - 26px), transparent 100%);
+}
+
+/* En pantalla completa la barra flota sobre la foto: su linea inferior
+   quedaba cruzando la imagen. */
+.editor.full .topbar { border-bottom: 0; }
+
+/* La marca de lo que se va a borrar seguia con el rosa de la paleta vieja. */
+.erase-overlay ellipse {
+  fill: rgba(207, 142, 174, 0.34);
+  stroke: rgba(255, 255, 255, 0.55);
+}
+
+/* El panel no toca el borde de la pantalla (las pestanas van debajo), asi que
+   reservarle el alto de la barra de gestos solo desperdiciaba espacio util. */
+.panel { padding-bottom: 14px; }
+
+/* La marquita que indica el valor de partida crecio a 14 px pero conservo el
+   margen de la de 12, y quedaba un pixel abajo del centro. */
+.slider-base { margin-top: -7px; }
