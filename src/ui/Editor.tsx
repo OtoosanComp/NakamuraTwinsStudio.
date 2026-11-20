@@ -165,7 +165,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
   useEffect(() => {
     if (!photo) return;
     const zoom = edit.crop.zoom;
-    if (zoom > 1.5 && !detail && !detailBusy.current && pointers.current.size === 0) {
+    if (zoom > 1.5 && !detail && !detailBusy.current && !busy && pointers.current.size === 0) {
       detailBusy.current = true;
       const max = Math.min(rendererRef.current?.maxTexture ?? 4096, 4096);
       decodeDetail(photo.blob, max)
@@ -176,7 +176,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
       detail.bmp.close();
       setDetail(null);
     }
-  }, [edit.crop.zoom, photo, detail]);
+  }, [edit.crop.zoom, photo, detail, busy]);
 
   // Cambiar de fuente obliga a volver a subir la textura.
   useEffect(() => {
@@ -582,6 +582,8 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     if (!photo) return;
     setMenu(false);
     setBusy('Revelando en alta calidad…');
+    // Soltamos la copia de alta resolución: revelar pide mucha memoria de golpe
+    if (detail) { detail.bmp.close(); setDetail(null); }
     try {
       const jpeg = await exportJpeg(photo, adj, edit.crop, {
         mask: edit.maskOn ? mask : null,
@@ -598,7 +600,12 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
         await shareImage(jpeg, preset ? `Editada con estilo ${preset.name} en Nakamura Twins Studio` : undefined);
       }
     } catch (e) {
-      toast(`No se pudo exportar: ${(e as Error).message}`);
+      const msg = (e as Error).message ?? '';
+      toast(
+        /decoded|decode/i.test(msg)
+          ? 'No pude leer la foto original. Ábrela otra vez desde la galería y vuelve a exportar.'
+          : `No se pudo exportar: ${msg}`,
+      );
     } finally {
       setBusy(null);
     }

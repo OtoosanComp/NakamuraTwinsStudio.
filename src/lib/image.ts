@@ -89,6 +89,32 @@ export function formatShutter(t?: number) {
   return t >= 1 ? `${t.toFixed(1)} s` : `1/${Math.round(1 / t)} s`;
 }
 
+/** Último recurso: algunos JPG que createImageBitmap rechaza sí abren como <img>. */
+async function decodeViaImg(blob: Blob, maxSide: number) {
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = new Image();
+    img.decoding = 'sync';
+    await new Promise<void>((ok, bad) => {
+      img.onload = () => ok();
+      img.onerror = () => bad(new Error('img'));
+      img.src = url;
+    });
+    const fw = img.naturalWidth, fh = img.naturalHeight;
+    if (!fw || !fh) throw new Error('img vacía');
+    const k = Math.min(1, maxSide / Math.max(fw, fh));
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(fw * k));
+    c.height = Math.max(1, Math.round(fh * k));
+    c.getContext('2d')!.drawImage(img, 0, 0, c.width, c.height);
+    const bmp = await createImageBitmap(c);
+    c.width = c.height = 1;
+    return { bmp, fullW: fw, fullH: fh };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 async function decode(blob: Blob, maxSide: number, meta: { w?: number; h?: number; exif: ExifInfo }) {
   let w = meta.w, h = meta.h;
   const swap = (meta.exif.orientation ?? 1) >= 5;
@@ -105,7 +131,12 @@ async function decode(blob: Blob, maxSide: number, meta: { w?: number; h?: numbe
       bmp.close();
     } catch { /* probar sin redimensionar */ }
   }
-  const full = await createImageBitmap(blob, { imageOrientation: 'from-image' });
+  let full: ImageBitmap;
+  try {
+    full = await createImageBitmap(blob, { imageOrientation: 'from-image' });
+  } catch {
+    return decodeViaImg(blob, maxSide);
+  }
   const fw = full.width, fh = full.height;
   const k = Math.min(1, maxSide / Math.max(fw, fh));
   if (k === 1) return { bmp: full, fullW: fw, fullH: fh };
@@ -124,7 +155,17 @@ export async function decodeDetail(blob: Blob, maxSide: number) {
   return bmp;
 }
 
-export async function loadPhoto(blob: Blob): Promise<LoadedPhoto> {
+export async function loadPhoto(input: Blob): Promise<LoadedPhoto> {
+  // La galería del teléfono no entrega la foto, entrega una REFERENCIA al archivo.
+  // Esa referencia caduca mientras editas, y entonces exportar fallaba con
+  // "The source image could not be decoded". Por eso copiamos los bytes de una vez.
+  let blob: Blob;
+  try {
+    blob = new Blob([await input.arrayBuffer()], { type: input.type || 'image/jpeg' });
+  } catch {
+    throw new Error('No pude leer la foto del teléfono. Ábrela otra vez desde la galería.');
+  }
+
   const meta = await readJpegMeta(blob).catch(() => ({ exif: {} as ExifInfo }));
   let res;
   try {
