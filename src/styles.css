@@ -263,38 +263,6 @@ input[type='range']::-moz-range-thumb { width: 18px; height: 18px; border-radius
   animation: pop 0.2s ease-out;
 }
 
-/* ---------- Cámara ---------- */
-.camera { position: fixed; inset: 0; background: #000; overflow: hidden; }
-.hidden-video { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
-.camera-view { position: absolute; inset: 0; display: grid; place-items: center; }
-.camera-top {
-  position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; justify-content: space-between;
-  padding: calc(var(--safe-top) + 6px) 8px 6px; background: linear-gradient(#000a, transparent);
-}
-.camera-title { font-weight: 600; font-size: 0.9em; }
-.camera-bottom {
-  position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 12px calc(var(--safe-bottom) + 12px);
-  background: linear-gradient(transparent, #000c 30%); display: grid; gap: 10px; justify-items: center;
-}
-.camera-bottom .preset-chips { width: 100%; }
-.shutter-row { display: flex; align-items: center; justify-content: space-around; width: 100%; }
-.shutter { width: 76px; height: 76px; border-radius: 50%; background: #fff; border: 5px solid #ffffff55; background-clip: padding-box; box-shadow: 0 0 0 3px #fff; }
-.shutter:active { transform: scale(0.94); }
-.camera-tips { position: absolute; left: 10px; right: 10px; top: calc(var(--safe-top) + 64px); display: grid; gap: 8px; }
-.level { position: absolute; left: 50%; top: 50%; width: 46%; margin-left: -23%; height: 0; pointer-events: none; transition: transform 0.1s; }
-.level span { display: block; height: 2px; background: #ffd479; box-shadow: 0 0 4px #000; }
-.level.ok span { background: #4ade80; height: 3px; }
-.flash { position: absolute; inset: 0; background: #fff; opacity: 0.7; }
-.center-abs { position: absolute; margin: 20px; }
-
-/* Medidor de pulso firme en la cámara */
-.steady { font-size: 0.68em; display: grid; gap: 3px; justify-items: center; min-width: 86px; color: var(--muted); }
-.steady i { display: block; height: 3px; border-radius: 2px; background: currentColor; transition: width 0.15s; }
-.steady.ok { color: #4ade80; }
-.steady.mid { color: #ffd479; }
-.steady.bad { color: #ff7a7a; }
-.camera-top { gap: 6px; }
-
 /* Guía de parámetros por estilo */
 table.shoot { width: 100%; border-collapse: collapse; font-size: 0.88em; }
 table.shoot th {
