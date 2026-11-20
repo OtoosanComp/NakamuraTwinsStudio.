@@ -34,6 +34,26 @@ export interface EditState {
   brush: BrushStroke[];
   /** Aclarar y quemar: add = aclarar. */
   dodge: BrushStroke[];
+  /** Filtros radiales y degradados. */
+  local: LocalFilter[];
+}
+
+export interface LocalFilter {
+  type: 'radial' | 'lineal';
+  /** Centro, de 0 a 1. */
+  cx: number;
+  cy: number;
+  /** Radio (radial) o mitad del ancho de la transición (degradado), en fracción del ancho. */
+  size: number;
+  /** Grados; solo para el degradado. */
+  angle: number;
+  /** Qué tan difuminado es el borde, de 0 a 1. */
+  feather: number;
+  /** true = afecta fuera en vez de dentro. */
+  invert: boolean;
+  exposure: number;
+  temperature: number;
+  saturation: number;
 }
 
 export interface BrushStroke {
@@ -49,7 +69,7 @@ export function initialEdit(): EditState {
   return {
     autoOn: true, auto: {}, presetId: null, amount: 1, user: {},
     crop: defaultCrop(), maskOn: false, subjectPresetId: null, subjectAmount: 1,
-    curve: [...CURVE_IDENTITY], erase: [], heal: [], brush: [], dodge: [],
+    curve: [...CURVE_IDENTITY], erase: [], heal: [], brush: [], dodge: [], local: [],
   };
 }
 

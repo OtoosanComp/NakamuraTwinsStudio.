@@ -45,6 +45,10 @@ uniform float u_gBalance;
 uniform float u_clarity, u_dehaze, u_sharpen, u_fade, u_vignette, u_grain, u_grainSize, u_seed;
 uniform float u_denoise;
 uniform float u_hasMask, u_showMask, u_maskFeather, u_clip, u_alphaFromMask, u_bicubic, u_hasCurve, u_hasBrush, u_hasFill, u_hasDodge;
+uniform int u_localCount;
+uniform vec4 u_localA[3];  // cx, cy, tamano, angulo
+uniform vec4 u_localB[3];  // suavidad, invertido, tipo (0 radial, 1 degradado)
+uniform vec4 u_localC[3];  // luz (EV), temperatura, saturacion
 uniform int u_healCount;
 uniform vec4 u_healA[20];  // xy = centro, z = radio (fraccion del ancho)
 uniform vec4 u_healB[20];  // xy = de donde se copia
@@ -211,6 +215,32 @@ void main() {
     }
   }
 
+  // --- Filtros locales: radial y degradado, como los de un revelador de escritorio ---
+  for (int i = 0; i < 3; i++) {
+    if (i >= u_localCount) break;
+    // Corregimos la proporción para que el círculo salga redondo y no ovalado
+    vec2 fd = (uv - u_localA[i].xy) * vec2(1.0, u_srcSize.y / u_srcSize.x);
+    float size = max(u_localA[i].z, 0.004);
+    float soft = max(0.05, u_localB[i].x);
+    float wgt;
+    if (u_localB[i].z < 0.5) {
+      wgt = 1.0 - smoothstep(1.0 - soft, 1.0, length(fd) / size);
+    } else {
+      float ang = u_localA[i].w;
+      float proj = dot(fd, vec2(cos(ang), sin(ang))) / size;
+      wgt = 1.0 - smoothstep(-soft, soft, proj);
+    }
+    if (u_localB[i].y > 0.5) wgt = 1.0 - wgt;
+    if (wgt <= 0.002) continue;
+
+    vec3 fl = pow(max(c, 0.0), vec3(2.2)) * exp2(u_localC[i].x * wgt);
+    float ft = u_localC[i].y * wgt;
+    vec3 fwb = vec3(1.0 + 0.32 * ft, 1.0, 1.0 - 0.32 * ft);
+    fl *= fwb / luma(fwb);
+    c = pow(max(fl, 0.0), vec3(1.0 / 2.2));
+    c = mix(vec3(luma(c)), c, 1.0 + u_localC[i].z * wgt);
+  }
+
   // --- Claridad (contraste local en medios tonos) ---
   L = clamp(luma(c), 0.0, 1.0);
   float mid = 1.0 - pow(abs(2.0 * L - 1.0), 2.0);
@@ -354,6 +384,7 @@ export class Renderer {
   private fill: WebGLTexture | null = null;
   private dodge: WebGLTexture | null = null;
   private heal: { a: Float32Array; b: Float32Array; c: Float32Array; n: number } = { a: new Float32Array(80), b: new Float32Array(80), c: new Float32Array(80), n: 0 };
+  private local = { a: new Float32Array(12), b: new Float32Array(12), c: new Float32Array(12), n: 0 };
   private srcW = 0; private srcH = 0;
   private a: Target | null = null; private b: Target | null = null;
   private seed = Math.random() * 100;
@@ -521,6 +552,21 @@ export class Renderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   }
 
+  /** Filtros radiales y degradados. Máximo 3. */
+  setLocal(filters: {
+    type: 'radial' | 'lineal'; cx: number; cy: number; size: number; angle: number;
+    feather: number; invert: boolean; exposure: number; temperature: number; saturation: number;
+  }[]) {
+    const n = Math.min(3, filters.length);
+    for (let i = 0; i < n; i++) {
+      const f = filters[i];
+      this.local.a.set([f.cx, f.cy, f.size, (f.angle * Math.PI) / 180], i * 4);
+      this.local.b.set([f.feather, f.invert ? 1 : 0, f.type === 'lineal' ? 1 : 0, 0], i * 4);
+      this.local.c.set([f.exposure, f.temperature / 100, f.saturation / 100, 0], i * 4);
+    }
+    this.local.n = n;
+  }
+
   /** Objetos que se tapan. Máximo 20; los de más se ignoran. */
   setHeal(strokes: { x: number; y: number; r: number; dx: number; dy: number; fix: [number, number, number] }[]) {
     const n = Math.min(20, strokes.length);
@@ -636,6 +682,12 @@ export class Renderer {
     gl.bindTexture(gl.TEXTURE_2D, this.dodge);
     gl.uniform1i(m.u('u_dodge'), 6);
     gl.uniform1f(m.u('u_hasDodge'), this.dodge ? 1 : 0);
+    gl.uniform1i(m.u('u_localCount'), this.local.n);
+    if (this.local.n > 0) {
+      gl.uniform4fv(m.u('u_localA'), this.local.a);
+      gl.uniform4fv(m.u('u_localB'), this.local.b);
+      gl.uniform4fv(m.u('u_localC'), this.local.c);
+    }
     gl.uniform1i(m.u('u_healCount'), this.heal.n);
     if (this.heal.n > 0) {
       gl.uniform4fv(m.u('u_healA'), this.heal.a);

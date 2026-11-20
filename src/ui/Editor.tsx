@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft, Undo2, Redo2, Eye, Save, Download, Share2, MoreVertical, Sparkles, Sun, Palette,
-  Droplets, SlidersHorizontal, Crop, Film, Wand2, RotateCcw, Copy, ClipboardPaste, Grid3x3, Loader2, Trash2, Users, Pipette, TriangleAlert, Eraser, Plus, Minus, Maximize2, Minimize2, Images, Moon,
+  Droplets, SlidersHorizontal, Crop, Film, Wand2, RotateCcw, Copy, ClipboardPaste, Grid3x3, Loader2, Trash2, Users, Pipette, TriangleAlert, Eraser, Plus, Minus, Maximize2, Minimize2, Images, Moon, CircleDot,
 } from 'lucide-react';
 import {
   ASPECTS, COLOR, EFFECTS, GRADING, HSL_COLORS, LIGHT, MASK, ALL_DEFS, cropOnSubject, defaultCrop, hslDefs, neutral,
@@ -16,7 +16,7 @@ import { personMask, type PersonMask } from '../engine/segment';
 import { buildCurveLut, CURVE_IDENTITY, isIdentityCurve } from '../engine/curve';
 import { findHealSource, regroupHeal, HEAL_MAX } from '../engine/heal';
 import { buildEraseFill } from '../engine/eraseFill';
-import type { BrushStroke } from '../engine/editState';
+import type { BrushStroke, LocalFilter } from '../engine/editState';
 import { Renderer } from '../engine/renderer';
 import {
   PREVIEW_MAX, decodeDetail, exportJpeg, formatShutter, loadPhoto, outputSize, smallJpegBase64, type LoadedPhoto,
@@ -37,7 +37,7 @@ export interface EditorSource {
   presetId?: string | null;
 }
 
-type Tab = 'estilos' | 'luz' | 'color' | 'mezcla' | 'gradacion' | 'efectos' | 'sujeto' | 'quitar' | 'recorte' | 'gemelas';
+type Tab = 'estilos' | 'luz' | 'color' | 'mezcla' | 'gradacion' | 'efectos' | 'sujeto' | 'quitar' | 'filtros' | 'recorte' | 'gemelas';
 
 const TABS: { id: Tab; label: string; icon: typeof Sun }[] = [
   { id: 'estilos', label: 'Estilos', icon: Film },
@@ -49,6 +49,7 @@ const TABS: { id: Tab; label: string; icon: typeof Sun }[] = [
   { id: 'efectos', label: 'Efectos', icon: Wand2 },
   { id: 'sujeto', label: 'Sujeto', icon: Users },
   { id: 'quitar', label: 'Quitar', icon: Eraser },
+  { id: 'filtros', label: 'Filtros', icon: CircleDot },
   { id: 'recorte', label: 'Recorte', icon: Crop },
 ];
 
@@ -101,6 +102,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
   const [paint, setPaint] = useState<'off' | 'add' | 'sub' | 'heal' | 'erase' | 'clonar' | 'dodge' | 'burn'>('off');
   const [brushSize, setBrushSize] = useState(0.07);
   const painting = useRef(false);
+  const movingLocal = useRef(false);
   const lastPaint = useRef<{ x: number; y: number } | null>(null);
   /** Dónde empezó el trazo actual dentro de edit.heal, para recalcular el origen al soltar. */
   const healGroup = useRef(0);
@@ -114,6 +116,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
   const [fillBusy, setFillBusy] = useState(false);
   /** Sube al soltar el dedo: el relleno es caro y solo debe correr una vez por trazo. */
   const [eraseTick, setEraseTick] = useState(0);
+  const [localSel, setLocalSel] = useState(0);
   const eraseRef = useRef(edit.erase);
   eraseRef.current = edit.erase;
   const [clip, setClip] = useState(false);
@@ -326,6 +329,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
   useEffect(() => { rendererRef.current?.setBrush(brushCanvas); }, [brushCanvas, photo, gen]);
   useEffect(() => { rendererRef.current?.setDodge(dodgeCanvas); }, [dodgeCanvas, photo, gen]);
   useEffect(() => { rendererRef.current?.setHeal(edit.heal); }, [edit.heal, photo, gen]);
+  useEffect(() => { rendererRef.current?.setLocal(edit.local); }, [edit.local, photo, gen]);
   useEffect(() => { rendererRef.current?.setFill(fill); }, [fill, photo, gen]);
 
   // El relleno según contenido es caro, así que corre una sola vez: al soltar el dedo.
@@ -388,7 +392,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
       r.renderSplit(bypass ? neutral() : adj, subjAdj, rect, w, h, { bypass, showMask, clip });
     });
     return () => cancelAnimationFrame(id);
-  }, [adj, subjAdj, edit.crop, edit.curve, edit.heal, fill, brushCanvas, dodgeCanvas, bypass, photo, mask, showMask, clip, detail, srcW, srcH, gen]);
+  }, [adj, subjAdj, edit.crop, edit.curve, edit.heal, edit.local, fill, brushCanvas, dodgeCanvas, bypass, photo, mask, showMask, clip, detail, srcW, srcH, gen]);
 
   // ---------- Histograma de la foto editada ----------
   useEffect(() => {
@@ -535,6 +539,18 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
     }
   };
 
+  /** Arrastra el centro del filtro local seleccionado. */
+  const moveLocal = (clientX: number, clientY: number) => {
+    const pt = imagePointAt(clientX, clientY);
+    if (!pt) return;
+    setEdit((st) => {
+      const next = [...st.local];
+      if (!next[localSel]) return st;
+      next[localSel] = { ...next[localSel], cx: pt.x / srcW, cy: pt.y / srcH };
+      return { ...st, local: next };
+    });
+  };
+
   const onPointerDown = (e: React.PointerEvent) => {
     if (picking) { pickWhiteBalance(e.clientX, e.clientY); return; }
     if (!photo) return;
@@ -553,6 +569,15 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
       return;
     }
     (e.target as Element).setPointerCapture(e.pointerId);
+
+    // En la pestaña de filtros, un dedo mueve el centro del filtro elegido
+    if (tab === 'filtros' && edit.local[localSel] && pointers.current.size === 0) {
+      pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      movingLocal.current = true;
+      dragStart.current = edit;
+      moveLocal(e.clientX, e.clientY);
+      return;
+    }
 
     if (paint !== 'off') {
       pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -588,6 +613,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
   const onPointerMove = (e: React.PointerEvent) => {
     if (!pointers.current.has(e.pointerId)) return;
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (movingLocal.current) { moveLocal(e.clientX, e.clientY); return; }
     if (painting.current) { paintAt(e.clientX, e.clientY); return; }
     const g = gesture.current;
     const cv = canvasRef.current;
@@ -631,6 +657,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
         });
       }
     }
+    movingLocal.current = false;
     if (painting.current && paint === 'erase') setEraseTick((t) => t + 1);
     painting.current = false;
     lastPaint.current = null;
@@ -670,6 +697,7 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
         subjAdj,
         brush: edit.maskOn ? brushCanvas : null,
         dodge: dodgeCanvas,
+        local: edit.local,
         curve: isIdentityCurve(edit.curve) ? null : buildCurveLut(edit.curve),
         heal: edit.heal,
         erase: edit.erase,
@@ -1155,6 +1183,76 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
             />
           </div>
         );
+      case 'filtros': {
+        const lf = edit.local[localSel];
+        const setLf = (patch: Partial<LocalFilter>, commitIt = true) => {
+          const fn = (st: EditState) => {
+            const next = [...st.local];
+            next[localSel] = { ...next[localSel], ...patch };
+            return { ...st, local: next };
+          };
+          if (commitIt) apply(fn); else setEdit(fn);
+        };
+        const addFilter = (type: 'radial' | 'lineal') => {
+          if (edit.local.length >= 3) { toast('Hasta 3 filtros por foto.'); return; }
+          apply((st) => ({ ...st, local: [...st.local, { ...({ type: 'radial', cx: 0.5, cy: 0.5, size: 0.3, angle: 0, feather: 0.5, invert: false, exposure: 0, temperature: 0, saturation: 0 } as LocalFilter), type, angle: type === 'lineal' ? 90 : 0 }] }));
+          setLocalSel(edit.local.length);
+        };
+        const lfSlider = (label: string, key: keyof LocalFilter, min: number, max: number, step: number, what: string, fmt?: (v: number) => string) => (
+          <Slider
+            def={{ key: 'contrast', label, min, max, step, what, up: 'Sube el efecto.', down: 'Lo baja.' }}
+            value={lf[key] as number}
+            format={fmt}
+            onStart={() => { dragStart.current = edit; }}
+            onChange={(v) => setLf({ [key]: v } as Partial<LocalFilter>, false)}
+            onEnd={() => { pushHistory(dragStart.current); dragStart.current = null; }}
+            onReset={() => setLf({ [key]: 0 } as Partial<LocalFilter>)}
+            onLearn={(d, v) => showLearn({ title: d.label, value: String(Math.round(v * 100) / 100), body: what })}
+          />
+        );
+        return (
+          <div className="panel">
+            <p className="muted small">
+              Afectan solo una parte de la foto, sin pincel: el <b>radial</b> para una cara o un sujeto,
+              el <b>degradado</b> para un cielo o un piso. Arrastra sobre la foto para moverlo.
+            </p>
+            <div className="row">
+              <button className="btn small" onClick={() => addFilter('radial')}><CircleDot size={14} /> Radial</button>
+              <button className="btn small" onClick={() => addFilter('lineal')}><SlidersHorizontal size={14} /> Degradado</button>
+            </div>
+            {edit.local.length > 1 && (
+              <div className="chips">
+                {edit.local.map((f, i) => (
+                  <button key={i} className={`chip ${i === localSel ? 'active' : ''}`} onClick={() => setLocalSel(i)}>
+                    {f.type === 'radial' ? 'Radial' : 'Degradado'} {i + 1}
+                  </button>
+                ))}
+              </div>
+            )}
+            {!lf ? (
+              <p className="muted small">Agrega uno para empezar.</p>
+            ) : (
+              <>
+                {lfSlider('Luz', 'exposure', -2, 2, 0.02, 'Aclara u oscurece solo la zona del filtro.', (v) => `${v > 0 ? '+' : ''}${v.toFixed(2)} EV`)}
+                {lfSlider('Temperatura', 'temperature', -100, 100, 1, 'Calienta o enfría solo esa zona.')}
+                {lfSlider('Saturación', 'saturation', -100, 100, 1, 'Sube o baja el color solo en esa zona.')}
+                {lfSlider('Tamaño', 'size', 0.05, 1.2, 0.01, 'Qué tan grande es la zona que abarca.', (v) => `${Math.round(v * 100)}%`)}
+                {lfSlider('Suavidad del borde', 'feather', 0.05, 1, 0.01, 'Qué tan difuminado es el paso entre dentro y fuera.', (v) => `${Math.round(v * 100)}%`)}
+                {lf.type === 'lineal' && lfSlider('Giro', 'angle', -180, 180, 1, 'Hacia dónde cae el degradado.', (v) => `${Math.round(v)}°`)}
+                <div className="row">
+                  <button className={`btn small ${lf.invert ? 'primary' : ''}`} onClick={() => setLf({ invert: !lf.invert })}>
+                    <RotateCcw size={14} /> {lf.invert ? 'Afecta fuera' : 'Afecta dentro'}
+                  </button>
+                  <button className="btn ghost small" onClick={() => {
+                    apply((st) => ({ ...st, local: st.local.filter((_, i) => i !== localSel) }));
+                    setLocalSel(0);
+                  }}><Trash2 size={14} /> Quitar filtro</button>
+                </div>
+              </>
+            )}
+          </div>
+        );
+      }
       case 'recorte':
         return (
           <div className="panel">
@@ -1289,6 +1387,28 @@ export function Editor({ source, settings, onBack, onOpenSettings, toast }: {
         <div className="canvas-wrap" style={fit}>
           <canvas ref={canvasRef} style={fit} />
           {showGrid && photo && <div className="grid-overlay"><i /><i /><i /><i /></div>}
+          {tab === 'filtros' && photo && edit.local[localSel] && (() => {
+            const f = edit.local[localSel];
+            const r = resolveCrop(edit.crop, srcW, srcH);
+            const cs = Math.cos(-r.angle), sn = Math.sin(-r.angle);
+            const px = f.cx * srcW - r.cx, py = f.cy * srcH - r.cy;
+            const qx = px * cs - py * sn, qy = px * sn + py * cs;
+            const cxp = (qx / r.w + 0.5) * 100, cyp = (qy / r.h + 0.5) * 100;
+            const rxp = (f.size * srcW / r.w) * 100, ryp = (f.size * srcW / r.h) * 100;
+            return (
+              <svg className="local-overlay" viewBox="0 0 100 100" preserveAspectRatio="none">
+                {f.type === 'radial'
+                  ? <ellipse cx={cxp} cy={cyp} rx={rxp} ry={ryp} />
+                  : <line
+                      x1={cxp - Math.cos((f.angle + 90) * Math.PI / 180) * 90}
+                      y1={cyp - Math.sin((f.angle + 90) * Math.PI / 180) * 90}
+                      x2={cxp + Math.cos((f.angle + 90) * Math.PI / 180) * 90}
+                      y2={cyp + Math.sin((f.angle + 90) * Math.PI / 180) * 90}
+                    />}
+                <circle cx={cxp} cy={cyp} r="1.4" className="local-dot" />
+              </svg>
+            );
+          })()}
           {tab === 'quitar' && photo && edit.erase.length > 0 && (
             <svg className="erase-overlay" viewBox="0 0 100 100" preserveAspectRatio="none">
               {edit.erase.map((e, i) => {

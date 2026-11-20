@@ -195,6 +195,8 @@ export interface ExportExtras {
   brush?: TexImageSource | null;
   /** Lienzo de aclarar y quemar. */
   dodge?: TexImageSource | null;
+  /** Filtros radiales y degradados. */
+  local?: Parameters<Renderer['setLocal']>[0];
   /** Tabla de la curva de tonos. */
   curve?: Uint8Array | null;
   /** Lo que se borró con relleno según contenido. Se recalcula aquí a mayor resolución. */
@@ -213,7 +215,7 @@ export async function exportJpeg(
   crop: CropState,
   extras: ExportExtras = {},
 ): Promise<Blob> {
-  const { mask, subjAdj, brush, dodge, curve, heal, erase, limit = EXPORT_MAX, quality = 0.95 } = extras;
+  const { mask, subjAdj, brush, dodge, local, curve, heal, erase, limit = EXPORT_MAX, quality = 0.95 } = extras;
   const canvas = document.createElement('canvas');
   const r = new Renderer(canvas);
   try {
@@ -224,6 +226,7 @@ export async function exportJpeg(
     r.setMask(mask?.canvas ?? null);
     r.setBrush(brush ?? null);
     r.setDodge(dodge ?? null);
+    r.setLocal(local ?? []);
     r.setCurve(curve ?? null);
     r.setHeal(heal ?? []);
     // El relleno se resuelve otra vez sobre la foto grande, para que no salga blando

@@ -23,6 +23,7 @@ dos personajes de IA:
 - **Borrar objetos (relleno según contenido)**: PatchMatch multiescala busca en toda la foto los trozos que encajan y reconstruye el fondo, incluso patrones. Termina con fusión por gradientes (Poisson) para que el borde no se note. Medido: conserva 92-101% de la textura del fondo.
 - **Sello de clonar**: tú eliges de dónde copiar, para cuando el automático se equivoca.
 - **Aclarar y quemar**: exposición pintada a mano, respetando lo que ya está quemado o pegado.
+- **Filtro radial y degradado**: hasta 3 por foto, con luz, temperatura y saturación propias. Se mueven arrastrando sobre la foto.
 - **Pincel manual**: corrige a mano lo que la IA dejó fuera del recorte del sujeto (pelucas, props, alas).
 - **Curva de tonos**: cinco puntos que se arrastran, con interpolación monótona para que no aparezcan halos.
 - **Aplicar a más fotos**: el mismo estilo y ajustes a toda una sesión, guardando cada una en la galería.

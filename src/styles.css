@@ -345,3 +345,10 @@ ul.basics li { margin: 7px 0; line-height: 1.4; }
 /* Marca de lo que se va a borrar */
 .erase-overlay { position: absolute; inset: 0; pointer-events: none; }
 .erase-overlay ellipse { fill: rgba(255, 93, 143, 0.35); stroke: rgba(255, 255, 255, 0.5); stroke-width: 0.2; }
+
+/* Guía del filtro local */
+.local-overlay { position: absolute; inset: 0; pointer-events: none; }
+.local-overlay ellipse, .local-overlay line {
+  fill: none; stroke: rgba(255, 255, 255, 0.85); stroke-width: 0.3; stroke-dasharray: 1.5 1.5;
+}
+.local-overlay .local-dot { fill: var(--accent); stroke: #fff; stroke-width: 0.3; stroke-dasharray: none; }
